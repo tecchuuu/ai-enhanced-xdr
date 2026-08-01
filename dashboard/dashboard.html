@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XDR Detection Split — rules vs model</title>
+<style>
+  :root{
+    --bg:#12111A; --surface:#1B1926; --surface-2:#232032;
+    --line:#302C42; --axis:#3E3956;
+    --ink:#E8E5F2; --muted:#8E88A6;
+    --rule:#E8A33D;      /* signature-based: known, established */
+    --ai:#6BE1C4;        /* model-based: the new layer */
+    --crit:#FF6B7A;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--ui); font-size:14px; line-height:1.5;
+  }
+
+  /* ---------- header ---------- */
+  header{
+    padding:28px 32px 20px; border-bottom:1px solid var(--line);
+    display:flex; flex-wrap:wrap; gap:28px; align-items:flex-end;
+  }
+  h1{
+    margin:0; font-size:19px; font-weight:600; letter-spacing:-.01em;
+  }
+  h1 span{ color:var(--muted); font-weight:400; }
+  .sub{ margin:4px 0 0; color:var(--muted); font-size:12.5px; }
+  .stats{ margin-left:auto; display:flex; gap:26px; }
+  .stat{ text-align:right; }
+  .stat .n{ font-family:var(--mono); font-size:26px; line-height:1; font-weight:600; }
+  .stat .l{
+    display:block; margin-top:6px; font-size:10.5px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .stat.rule .n{ color:var(--rule); }
+  .stat.ai   .n{ color:var(--ai); }
+  .stat.delta .n{ color:var(--crit); }
+
+  /* ---------- column headings ---------- */
+  .heads{
+    display:grid; grid-template-columns:1fr 132px 1fr;
+    padding:18px 32px 10px; gap:0; align-items:center;
+  }
+  .heads div{ font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+  .heads .l{ text-align:right; }
+  .heads .l b{ color:var(--rule); font-weight:600; }
+  .heads .r b{ color:var(--ai); font-weight:600; }
+  .heads .c{ text-align:center; font-size:10px; }
+
+  /* ---------- timeline ---------- */
+  .timeline{ padding:0 32px 64px; position:relative; }
+  .row{
+    display:grid; grid-template-columns:1fr 132px 1fr;
+    min-height:54px; position:relative;
+  }
+  /* the central axis line */
+  .row .axis{
+    position:relative; display:flex; align-items:center; justify-content:center;
+  }
+  .row .axis::before{
+    content:""; position:absolute; top:0; bottom:0; left:50%;
+    width:1px; background:var(--axis); transform:translateX(-.5px);
+  }
+  .time{
+    position:relative; z-index:1; background:var(--bg); padding:3px 8px;
+    font-family:var(--mono); font-size:11px; color:var(--muted); white-space:nowrap;
+  }
+
+  .card{
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:6px; padding:10px 12px; margin:6px 0;
+    display:flex; flex-direction:column; gap:4px;
+  }
+  .left  .card{ margin-right:14px; border-left:3px solid var(--rule); }
+  .right .card{ margin-left:14px;  border-left:3px solid var(--ai); }
+
+  .card .top{ display:flex; gap:8px; align-items:baseline; }
+  .id{ font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .lvl{
+    font-family:var(--mono); font-size:10px; padding:1px 5px; border-radius:3px;
+    background:var(--surface-2); color:var(--muted);
+  }
+  .lvl.hi{ background:rgba(255,107,122,.14); color:var(--crit); }
+  .desc{ font-size:13px; }
+  .meta{ font-family:var(--mono); font-size:11px; color:var(--muted); }
+
+  /* the point of the whole page: model fired, rules silent */
+  .row.gap .right .card{
+    border-color:var(--ai); box-shadow:0 0 0 1px rgba(107,225,196,.25);
+  }
+  .missed{
+    align-self:flex-start; margin-top:2px;
+    font-size:10px; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--ai); border:1px solid rgba(107,225,196,.4);
+    padding:1px 6px; border-radius:3px;
+  }
+  .silent{
+    display:flex; align-items:center; justify-content:flex-end;
+    padding-right:14px; color:var(--muted); font-family:var(--mono);
+    font-size:11px; opacity:.5;
+  }
+
+  .empty{ padding:60px 32px; text-align:center; color:var(--muted); }
+  .empty code{
+    font-family:var(--mono); background:var(--surface-2);
+    padding:2px 6px; border-radius:4px; color:var(--ink);
+  }
+  footer{
+    padding:14px 32px; border-top:1px solid var(--line);
+    color:var(--muted); font-size:11.5px; font-family:var(--mono);
+    display:flex; justify-content:space-between;
+  }
+  @media (max-width:820px){
+    .heads,.row{ grid-template-columns:1fr; }
+    .row .axis::before{ display:none; }
+    .left .card,.right .card{ margin:6px 0; }
+    .silent{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Detection split <span>— signature rules vs anomaly model</span></h1>
+    <p class="sub">Wazuh alerts and Isolation Forest detections on the same timeline. Gaps on the left are what rules did not catch.</p>
+  </div>
+  <div class="stats">
+    <div class="stat rule"><div class="n" id="s-rule">–</div><span class="l">Rule alerts</span></div>
+    <div class="stat ai"><div class="n" id="s-ai">–</div><span class="l">Model alerts</span></div>
+    <div class="stat delta"><div class="n" id="s-delta">–</div><span class="l">Model only</span></div>
+  </div>
+</header>
+
+<div class="heads">
+  <div class="l"><b>Rule-based</b> · Wazuh ruleset</div>
+  <div class="c">time</div>
+  <div class="r"><b>Model</b> · Isolation Forest</div>
+</div>
+
+<div class="timeline" id="timeline">
+  <div class="empty">Loading detections…</div>
+</div>
+
+<footer>
+  <span id="status">connecting…</span>
+  <span>refreshes every 15s</span>
+</footer>
+
+<script>
+const API = "http://localhost:8000";
+const fmt = ts => ts ? new Date(ts).toISOString().slice(11,19) + "Z" : "—";
+
+async function load(){
+  const tl = document.getElementById("timeline");
+  try{
+    const [stats, combined] = await Promise.all([
+      fetch(API + "/api/stats").then(r => r.json()),
+      fetch(API + "/api/alerts/combined?limit=150").then(r => r.json())
+    ]);
+
+    document.getElementById("s-rule").textContent = stats.rule_alerts ?? 0;
+    document.getElementById("s-ai").textContent   = stats.ai_alerts ?? 0;
+
+    const alerts = combined.alerts || [];
+    // bucket both streams by minute so the two columns line up on one axis
+    const buckets = new Map();
+    for(const a of alerts){
+      if(!a.timestamp) continue;
+      const key = a.timestamp.slice(0,16);            // yyyy-mm-ddThh:mm
+      if(!buckets.has(key)) buckets.set(key, {rule:[], ai:[]});
+      buckets.get(key)[a.source === "ai" ? "ai" : "rule"].push(a);
+    }
+
+    const keys = [...buckets.keys()].sort().reverse();
+    let modelOnly = 0;
+
+    if(!keys.length){
+      tl.innerHTML = '<div class="empty">No detections yet. Generate auth activity, then run '
+                   + '<code>writeback.py</code>.</div>';
+    } else {
+      tl.innerHTML = keys.map(k => {
+        const b = buckets.get(k);
+        const gap = b.ai.length && !b.rule.length;
+        if(gap) modelOnly++;
+
+        const left = b.rule.length
+          ? b.rule.map(a => `
+              <div class="card">
+                <div class="top">
+                  <span class="id">${a.rule_id ?? "—"}</span>
+                  <span class="lvl ${a.level >= 10 ? "hi" : ""}">lvl ${a.level ?? "?"}</span>
+                </div>
+                <div class="desc">${esc(a.description)}</div>
+                <div class="meta">${a.agent ?? "—"}${a.srcuser ? " · " + esc(a.srcuser) : ""}${a.srcip ? " · " + a.srcip : ""}</div>
+              </div>`).join("")
+          : (b.ai.length ? '<div class="silent">no rule fired</div>' : "");
+
+        const right = b.ai.map(a => `
+            <div class="card">
+              <div class="top">
+                <span class="id">${a.rule_id ?? "—"}</span>
+                <span class="lvl ${a.level >= 10 ? "hi" : ""}">lvl ${a.level ?? "?"}</span>
+              </div>
+              <div class="desc">${esc(a.description)}</div>
+              <div class="meta">score ${a.score ?? "—"} · ${a.event_count ?? 0} events · ${a.distinct_users ?? 0} users</div>
+              ${!b.rule.length ? '<span class="missed">missed by rules</span>' : ""}
+            </div>`).join("");
+
+        return `<div class="row ${gap ? "gap" : ""}">
+                  <div class="left">${left}</div>
+                  <div class="axis"><span class="time">${fmt(k + ":00Z")}</span></div>
+                  <div class="right">${right}</div>
+                </div>`;
+      }).join("");
+    }
+
+    document.getElementById("s-delta").textContent = modelOnly;
+    document.getElementById("status").textContent =
+      `connected · ${alerts.length} alerts in view · updated ${new Date().toLocaleTimeString()}`;
+
+  }catch(e){
+    tl.innerHTML = '<div class="empty">Cannot reach the API. Start it with '
+                 + '<code>uvicorn main:app --reload --port 8000</code></div>';
+    document.getElementById("status").textContent = "disconnected";
+  }
+}
+
+function esc(s){
+  return String(s ?? "—").replace(/[&<>"]/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>
