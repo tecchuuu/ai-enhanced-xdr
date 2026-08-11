@@ -30,7 +30,7 @@ Endpoint → Wazuh Agent → Wazuh Manager → archives.json
 ```
 wazuh/          Wazuh manager/indexer/dashboard — Docker Compose + config
 ai-stack/       Kafka (KRaft mode) + streaming pipeline scripts
-dashboard/      FastAPI backend + detection-split dashboard (HTML/JS)
+dashboard/      FastAPI backend + SOC console (React + EUI) + legacy split view
 scripts/        traffic generation, orchestration, ML experiments
 docs/           architecture notes, results log, failure log
 ```
@@ -58,22 +58,35 @@ docker compose -f ai-stack.yml up -d
 
 **4. Python environment**
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv ml-venv
+source ml-venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**5. Run the pipeline**
+**5. Credentials**
 ```bash
-cd ../ai-stack/pipeline
-python archive_producer.py &      # Wazuh archive -> Kafka
-python detection_consumer.py &    # Kafka -> Isolation Forest -> OpenSearch
-
-cd ../../dashboard
-uvicorn main:app --host 0.0.0.0 --port 8000 &
-python3 -m http.server 8080 &
+cp dashboard/.env.example dashboard/.env
+# fill in the Wazuh API + OpenSearch credentials
 ```
-Dashboard: `http://localhost:8080/dashboard.html`
+
+**6. Run the pipeline + API** (or run the same commands by hand)
+```bash
+./ai-stack/start_all.sh
+```
+The producer tails the archive via `docker exec`, so the user needs docker
+access (`sudo usermod -aG docker $USER`, then re-login).
+
+**7. SOC console** (requires Node 18+)
+```bash
+cd dashboard/frontend
+npm install
+npm run dev
+```
+Console: `http://localhost:5173` — Wazuh-style UI (same EUI component library)
+with rule + AI alerts, time charts, threat categories, alert detail flyout,
+one-click IP blocking via Wazuh Active Response, audit-logged response history,
+and live agent status. The original detection-split demo view remains at
+`dashboard/dashboard.html`.
 
 ## Why this architecture
 
@@ -86,4 +99,6 @@ Full reasoning, evaluation methodology, and results are in `docs/`.
 
 ## Status
 
-In development. Core detection pipeline (ingestion → streaming → anomaly detection → writeback → dashboard) is working and validated against controlled attack scenarios with independent ground truth. Automated response (block/isolate), local LLM alert explanation, and GPU deployment on Morpheus are in progress.
+Core detection pipeline (ingestion → streaming → anomaly detection → writeback → dashboard) is working and validated against controlled attack scenarios with independent ground truth. Detections are enriched with heuristic threat categories (MITRE ATT&CK-mapped) and per-window source IPs, severity scales with anomaly score, and manual response (IP block via Wazuh Active Response, with audit log) works end to end from the console.
+
+Deferred pending hardware: GPU deployment on NVIDIA Morpheus (current GPU is AMD; the pipeline mirrors Morpheus's stage layout so the port is a swap, not a rewrite) and local-LLM alert explanation (insufficient RAM; the explainer consumes the same detection documents, so it attaches without pipeline changes). The anomaly model itself is swappable — Isolation Forest is the current occupant of the inference stage, not a design commitment.

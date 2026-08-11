@@ -17,7 +17,7 @@ equivalent; the separation is a scale concern, not a correctness one.
 """
 
 import json, re, signal, sys, time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -57,7 +57,8 @@ os_client = OpenSearch(
 
 # ----------------------------------------------------------------- state
 # window_key (epoch // WINDOW_SEC) -> accumulated stats
-windows = defaultdict(lambda: {"count": 0, "users": set(), "max_level": 0})
+windows = defaultdict(lambda: {"count": 0, "users": set(), "ips": Counter(),
+                               "max_level": 0})
 already_flagged = set()
 consumed = 0
 written  = 0
@@ -90,6 +91,7 @@ def ingest(event):
     w = windows[key]
     w["count"] += 1
     w["max_level"] = max(w["max_level"], event.get("rule", {}).get("level", 0) or 0)
+    w["ips"][data["srcip"]] += 1
 
     user = data.get("srcuser")
     if not user:
@@ -113,8 +115,33 @@ def build_frame():
             "max_level":       w["max_level"],
             "hour":            dt.hour,
             "events_per_user": round(w["count"] / users, 2) if users else w["count"],
+            "top_ips":         w["ips"].most_common(5),
         })
     return pd.DataFrame(rows).sort_values("timestamp") if rows else pd.DataFrame()
+
+
+def categorize(r):
+    """Heuristic post-classification of an anomalous window.
+
+    The model only says "this window deviates from baseline"; these labels turn
+    that into something an analyst can triage. Pattern -> (category, MITRE, label).
+    """
+    if r.events_per_user >= 10 and r.distinct_users <= 3:
+        return "brute_force", "T1110.001", "brute-force pattern"
+    if r.distinct_users >= 5 and r.events_per_user <= 5:
+        return "password_spraying", "T1110.003", "password-spraying pattern"
+    if r.hour < 6 or r.hour >= 22:
+        return "suspicious_timing", "T1078", "off-hours activity"
+    return "unclassified_anomaly", None, "unclassified deviation"
+
+
+def severity(score):
+    """Map anomaly score to a Wazuh-convention level (more negative = worse)."""
+    if score < -0.60:
+        return 12
+    if score < -0.50:
+        return 10
+    return 7
 
 
 def score_and_write():
@@ -139,6 +166,7 @@ def score_and_write():
     docs = []
     for _, r in hits.iterrows():
         already_flagged.add(r.key)
+        category, mitre, label = categorize(r)
         docs.append({
             "_index": AI_INDEX,
             "_source": {
@@ -146,8 +174,8 @@ def score_and_write():
                 "source": "morpheus_ai",
                 "rule": {
                     "id": "100001",
-                    "level": 10,
-                    "description": "AI: anomalous authentication behaviour detected",
+                    "level": severity(r.score),
+                    "description": f"AI: anomalous authentication behaviour — {label}",
                 },
                 "ai": {
                     "model":           "IsolationForest",
@@ -157,6 +185,9 @@ def score_and_write():
                     "event_count":     int(r.event_count),
                     "distinct_users":  int(r.distinct_users),
                     "events_per_user": float(r.events_per_user),
+                    "category":        category,
+                    "mitre":           mitre,
+                    "top_srcips":      [{"ip": ip, "count": n} for ip, n in r.top_ips],
                 },
                 "agent": {"name": "ubuntu-vm"},
             },
