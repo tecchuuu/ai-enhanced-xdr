@@ -95,7 +95,15 @@ and live agent status. The original detection-split demo view remains at
 - **Isolation Forest over a rolling window buffer**: unsupervised, so it requires no labelled attack data — it learns what "normal" looks like for this environment and flags deviations. Windowed aggregation (not per-event scoring) lets it catch slow, low-and-slow attacks that evade fixed-threshold correlation rules.
 - **Separate `ai-detections-*` index + custom rule ID range (100000+)**: keeps AI-generated findings distinguishable from native Wazuh rule alerts at query and display time.
 
-Full reasoning, evaluation methodology, and results are in `docs/`.
+Full reasoning is in `docs/`: `project_plan.md` (original architecture plan),
+`failure_log.md` (every error, dead end, and decision with rationale),
+`results_log.md` (claims, metrics, and evidence), `ROADMAP.md` (what's next and
+how the deferred pieces attach).
+
+**Test traffic:** attack scenarios were generated with local scripts (not
+committed) — any SSH brute-force source works to reproduce, e.g. repeated
+`ssh invalid-user@<vm-ip>` or `hydra` from another host on the VM's network.
+Attack from a *different* machine so the source IP is real and blockable.
 
 ## Status
 
