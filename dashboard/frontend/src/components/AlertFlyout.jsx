@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   EuiFlyout,
   EuiFlyoutHeader,
@@ -10,15 +10,68 @@ import {
   EuiCodeBlock,
   EuiText,
   EuiButton,
+  EuiButtonEmpty,
+  EuiButtonGroup,
+  EuiFieldText,
+  EuiTextArea,
+  EuiFormRow,
+  EuiPanel,
+  EuiCallOut,
   EuiFlexGroup,
   EuiFlexItem,
 } from "@elastic/eui";
-import { SourceBadge, SeverityBadge } from "./badges";
+import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
+import { setTriage } from "../api";
 import BlockIpModal from "./BlockIpModal";
 
-export default function AlertFlyout({ alert, onClose }) {
+const STATUS_OPTIONS = TRIAGE_STATES.map((s) => ({
+  id: s,
+  label: s === "false_positive" ? "false positive" : s,
+}));
+
+export default function AlertFlyout({ alert, onClose, onRefresh }) {
   const [blocking, setBlocking] = useState(false);
+  const [status, setStatus] = useState("new");
+  const [assignee, setAssignee] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setStatus(alert?.triage_status ?? "new");
+    setAssignee(alert?.assignee ?? "");
+    setNote(alert?.triage_note ?? "");
+    setSaved(false);
+    setError(null);
+  }, [alert]);
+
   if (!alert) return null;
+
+  const save = async (overrideStatus) => {
+    const nextStatus = overrideStatus ?? status;
+    setSaving(true);
+    setError(null);
+    try {
+      await setTriage({
+        alertId: alert.id,
+        status: nextStatus,
+        assignee: assignee || null,
+        note: note || null,
+        falsePositive: nextStatus === "false_positive",
+        alertRef: `${alert.rule_id ?? "?"} — ${alert.description ?? ""}`,
+        alertTimestamp: alert.timestamp,
+        alertSource: alert.source,
+      });
+      setStatus(nextStatus);
+      setSaved(true);
+      onRefresh?.();
+    } catch (e) {
+      setError(String(e.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const items = [
     { title: "Timestamp", description: alert.timestamp ?? "—" },
@@ -26,6 +79,7 @@ export default function AlertFlyout({ alert, onClose }) {
     { title: "Rule ID", description: alert.rule_id ?? "—" },
     { title: "Severity", description: <SeverityBadge level={alert.level} /> },
     { title: "Source", description: <SourceBadge source={alert.source} /> },
+    { title: "Triage", description: <TriageBadge status={alert.triage_status} /> },
   ];
 
   if (alert.srcip) items.push({ title: "Source IP", description: alert.srcip });
@@ -33,7 +87,6 @@ export default function AlertFlyout({ alert, onClose }) {
   if (alert.category) items.push({ title: "Category", description: alert.category });
   if (alert.mitre) items.push({ title: "MITRE ATT&CK", description: alert.mitre });
 
-  // AI-specific: how the model saw the window
   if (alert.source === "ai") {
     items.push(
       { title: "Anomaly score", description: String(alert.score ?? "—") },
@@ -62,6 +115,74 @@ export default function AlertFlyout({ alert, onClose }) {
         </EuiText>
       </EuiFlyoutHeader>
       <EuiFlyoutBody>
+        <EuiPanel hasBorder color="subdued">
+          <EuiTitle size="xxs">
+            <h3>Triage</h3>
+          </EuiTitle>
+          <EuiSpacer size="s" />
+          <EuiFormRow label="Status" fullWidth>
+            <EuiButtonGroup
+              legend="Triage status"
+              options={STATUS_OPTIONS}
+              idSelected={status}
+              onChange={setStatus}
+              buttonSize="compressed"
+            />
+          </EuiFormRow>
+          <EuiFormRow label="Assignee" fullWidth>
+            <EuiFieldText
+              placeholder="analyst"
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+              compressed
+              fullWidth
+            />
+          </EuiFormRow>
+          <EuiFormRow label="Note" fullWidth>
+            <EuiTextArea
+              placeholder="What did you find?"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              compressed
+              fullWidth
+            />
+          </EuiFormRow>
+          <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false} wrap>
+            <EuiFlexItem grow={false}>
+              <EuiButton size="s" onClick={() => save()} isLoading={saving} fill>
+                Save triage
+              </EuiButton>
+            </EuiFlexItem>
+            {alert.source === "ai" && (
+              <EuiFlexItem grow={false}>
+                <EuiButtonEmpty
+                  size="s"
+                  color="warning"
+                  onClick={() => save("false_positive")}
+                  isDisabled={saving}
+                >
+                  Mark false positive
+                </EuiButtonEmpty>
+              </EuiFlexItem>
+            )}
+            {saved && !error && (
+              <EuiFlexItem grow={false}>
+                <EuiText size="xs" color="success">
+                  saved
+                </EuiText>
+              </EuiFlexItem>
+            )}
+          </EuiFlexGroup>
+          {error && (
+            <>
+              <EuiSpacer size="s" />
+              <EuiCallOut title={error} color="danger" iconType="warning" size="s" />
+            </>
+          )}
+        </EuiPanel>
+
+        <EuiSpacer />
         <EuiDescriptionList type="column" listItems={items} compressed />
         <EuiSpacer />
         <EuiTitle size="xxs">

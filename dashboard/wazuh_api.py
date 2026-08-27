@@ -70,3 +70,19 @@ def block_ip(agent_id: str, srcip: str):
         "alert": {"data": {"srcip": srcip}},
     }
     return _request("PUT", f"/active-response?agents_list={agent_id}", json=body)
+
+
+def unblock_ip(agent_id: str, srcip: str):
+    """Attempt to remove a firewall-drop previously added for srcip.
+
+    Wazuh's manager API has no documented 'undo' for active response; this sends
+    the firewall-drop command tagged as a delete, which the agent AR wrapper
+    honours when it supports the add/delete protocol. Callers treat failure as
+    non-fatal and fall back to recording intent + agent-side teardown.
+    """
+    body = {
+        "command": "!firewall-drop",
+        "arguments": ["delete"],
+        "alert": {"data": {"srcip": srcip}},
+    }
+    return _request("PUT", f"/active-response?agents_list={agent_id}", json=body)

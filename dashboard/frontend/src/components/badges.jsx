@@ -30,3 +30,18 @@ export function SeverityBadge({ level }) {
     </EuiBadge>
   );
 }
+
+// analyst workflow state — must match TRIAGE_STATES in the backend
+export const TRIAGE_STATES = ["new", "investigating", "resolved", "false_positive"];
+
+const TRIAGE_META = {
+  new: { label: "new", color: "hollow" },
+  investigating: { label: "investigating", color: "primary" },
+  resolved: { label: "resolved", color: "success" },
+  false_positive: { label: "false positive", color: "warning" },
+};
+
+export function TriageBadge({ status }) {
+  const m = TRIAGE_META[status] ?? TRIAGE_META.new;
+  return <EuiBadge color={m.color}>{m.label}</EuiBadge>;
+}

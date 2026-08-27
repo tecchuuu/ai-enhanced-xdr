@@ -13,6 +13,7 @@ import { getStats, getCombined, getHealth } from "./api";
 import Overview from "./pages/Overview";
 import SecurityEvents from "./pages/SecurityEvents";
 import AiDetections from "./pages/AiDetections";
+import Metrics from "./pages/Metrics";
 import ResponseLog from "./pages/ResponseLog";
 import Agents from "./pages/Agents";
 
@@ -22,6 +23,7 @@ const PAGES = {
   overview: { title: "Overview", component: Overview },
   events: { title: "Security events", component: SecurityEvents },
   ai: { title: "AI detections", component: AiDetections },
+  metrics: { title: "Metrics", component: Metrics },
   responses: { title: "Response log", component: ResponseLog },
   agents: { title: "Agents", component: Agents },
 };
@@ -109,7 +111,12 @@ export default function App() {
           }
         />
         <EuiPageTemplate.Section>
-          <Page stats={stats} combined={combined} loading={loading} />
+          <Page
+            stats={stats}
+            combined={combined}
+            loading={loading}
+            onRefresh={load}
+          />
         </EuiPageTemplate.Section>
       </EuiPageTemplate>
     </>

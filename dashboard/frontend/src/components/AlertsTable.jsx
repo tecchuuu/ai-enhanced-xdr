@@ -1,12 +1,29 @@
 import { useState } from "react";
 import { EuiInMemoryTable } from "@elastic/eui";
-import { SourceBadge, SeverityBadge } from "./badges";
+import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
 import AlertFlyout from "./AlertFlyout";
 
 const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
 
-export default function AlertsTable({ alerts, loading, showScore = false }) {
+const TRIAGE_FILTER = {
+  type: "field_value_selection",
+  field: "triage_status",
+  name: "Triage",
+  multiSelect: "or",
+  options: TRIAGE_STATES.map((s) => ({
+    value: s,
+    view: <TriageBadge status={s} />,
+  })),
+};
+
+export default function AlertsTable({ alerts, loading, showScore = false, onRefresh }) {
   const [selected, setSelected] = useState(null);
+
+  // keep the open flyout pointed at the freshest copy of its alert, so a triage
+  // save (which refetches upstream) is reflected without reopening
+  const current = selected
+    ? (alerts?.find((a) => a.id === selected.id) ?? selected)
+    : null;
 
   const columns = [
     {
@@ -40,6 +57,13 @@ export default function AlertsTable({ alerts, loading, showScore = false }) {
       sortable: true,
       width: "100px",
     },
+    {
+      field: "triage_status",
+      name: "Triage",
+      render: (s) => <TriageBadge status={s} />,
+      sortable: true,
+      width: "120px",
+    },
     { field: "srcip", name: "Source IP", sortable: true, width: "130px" },
   ];
 
@@ -59,7 +83,10 @@ export default function AlertsTable({ alerts, loading, showScore = false }) {
         items={alerts}
         columns={columns}
         loading={loading}
-        search={{ box: { incremental: true, placeholder: "Filter alerts…" } }}
+        search={{
+          box: { incremental: true, placeholder: "Filter alerts…" },
+          filters: [TRIAGE_FILTER],
+        }}
         pagination={{ initialPageSize: 25, pageSizeOptions: [10, 25, 50] }}
         sorting={{ sort: { field: "timestamp", direction: "desc" } }}
         rowProps={(item) => ({
@@ -67,7 +94,11 @@ export default function AlertsTable({ alerts, loading, showScore = false }) {
           style: { cursor: "pointer" },
         })}
       />
-      <AlertFlyout alert={selected} onClose={() => setSelected(null)} />
+      <AlertFlyout
+        alert={current}
+        onClose={() => setSelected(null)}
+        onRefresh={onRefresh}
+      />
     </>
   );
 }

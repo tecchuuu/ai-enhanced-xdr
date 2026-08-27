@@ -2,7 +2,7 @@ import { useState } from "react";
 import { EuiPanel, EuiSpacer, EuiFilterGroup, EuiFilterButton } from "@elastic/eui";
 import AlertsTable from "../components/AlertsTable";
 
-export default function SecurityEvents({ combined, loading }) {
+export default function SecurityEvents({ combined, loading, onRefresh }) {
   const [sourceFilter, setSourceFilter] = useState("all"); // all | rule | ai
 
   const alerts = (combined?.alerts ?? []).filter(
@@ -32,7 +32,7 @@ export default function SecurityEvents({ combined, loading }) {
         </EuiFilterButton>
       </EuiFilterGroup>
       <EuiSpacer size="s" />
-      <AlertsTable alerts={alerts} loading={loading} />
+      <AlertsTable alerts={alerts} loading={loading} onRefresh={onRefresh} />
     </EuiPanel>
   );
 }

@@ -1,7 +1,7 @@
 import { EuiPanel, EuiSpacer, EuiText, EuiTitle } from "@elastic/eui";
 import AlertsTable from "../components/AlertsTable";
 
-export default function AiDetections({ combined, loading }) {
+export default function AiDetections({ combined, loading, onRefresh }) {
   const alerts = (combined?.alerts ?? []).filter((a) => a.source === "ai");
   return (
     <EuiPanel hasBorder>
@@ -15,7 +15,7 @@ export default function AiDetections({ combined, loading }) {
         </p>
       </EuiText>
       <EuiSpacer size="s" />
-      <AlertsTable alerts={alerts} loading={loading} showScore />
+      <AlertsTable alerts={alerts} loading={loading} showScore onRefresh={onRefresh} />
     </EuiPanel>
   );
 }

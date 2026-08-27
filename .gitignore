@@ -10,3 +10,5 @@ overnight_traffic.sh
 .env
 node_modules/
 dashboard/frontend/dist/
+*.swp
+.venv/

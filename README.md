@@ -84,9 +84,12 @@ npm run dev
 ```
 Console: `http://localhost:5173` — Wazuh-style UI (same EUI component library)
 with rule + AI alerts, time charts, threat categories, alert detail flyout,
-one-click IP blocking via Wazuh Active Response, audit-logged response history,
-and live agent status. The original detection-split demo view remains at
-`dashboard/dashboard.html`.
+per-alert triage (status / assignee / note / mark-false-positive), a **Metrics**
+page (live rule-vs-AI comparison, false-positive rate, MTTR), one-click IP
+blocking via Wazuh Active Response with an unblock action and current-block
+view, audit-logged response history, and live agent status. The original
+detection-split demo view remains at `dashboard/dashboard.html`. Console
+internals and contracts: `docs/dashboard-build-notes.md`.
 
 ## Why this architecture
 
@@ -98,7 +101,8 @@ and live agent status. The original detection-split demo view remains at
 Full reasoning is in `docs/`: `project_plan.md` (original architecture plan),
 `failure_log.md` (every error, dead end, and decision with rationale),
 `results_log.md` (claims, metrics, and evidence), `ROADMAP.md` (what's next and
-how the deferred pieces attach).
+how the deferred pieces attach), `dashboard-build-notes.md` (console additions
+and their contracts).
 
 **Test traffic:** attack scenarios were generated with local scripts (not
 committed) — any SSH brute-force source works to reproduce, e.g. repeated
@@ -110,3 +114,9 @@ Attack from a *different* machine so the source IP is real and blockable.
 Core detection pipeline (ingestion → streaming → anomaly detection → writeback → dashboard) is working and validated against controlled attack scenarios with independent ground truth. Detections are enriched with heuristic threat categories (MITRE ATT&CK-mapped) and per-window source IPs, severity scales with anomaly score, and manual response (IP block via Wazuh Active Response, with audit log) works end to end from the console.
 
 Deferred pending hardware: GPU deployment on NVIDIA Morpheus (current GPU is AMD; the pipeline mirrors Morpheus's stage layout so the port is a swap, not a rewrite) and local-LLM alert explanation (insufficient RAM; the explainer consumes the same detection documents, so it attaches without pipeline changes). The anomaly model itself is swappable — Isolation Forest is the current occupant of the inference stage, not a design commitment.
+
+## Limitations
+
+- **Detection plane is co-located with the monitored host** for the proof of concept. Detection itself is unaffected, but log tamper-resistance is not: a root-level compromise of the VM can destroy local evidence before it is acted on. A production deployment isolates the Wazuh manager / Kafka / OpenSearch onto a separate host; the pipeline design (Kafka between capture and model) is what makes that split a configuration change rather than a rewrite.
+- **Response is manual by default.** Anomaly detection carries false positives, so AI detections are routed to a human rather than auto-blocked. Automatic response (Wazuh Active Response `firewall-drop`) is appropriate only for the highest-confidence tier. Unblocking is best-effort — Wazuh exposes no first-class API undo (see `docs/dashboard-build-notes.md`).
+- **Single anomaly domain.** The detector covers authentication events only. Network / web / host detectors are designed (`docs/ROADMAP.md`) but not built.

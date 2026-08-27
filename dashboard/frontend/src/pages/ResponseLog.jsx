@@ -9,6 +9,7 @@ import {
   EuiEmptyPrompt,
 } from "@elastic/eui";
 import { getResponseLog } from "../api";
+import BlockedIps from "../components/BlockedIps";
 
 const STATUS_COLOR = { executed: "success", refused: "warning", failed: "danger" };
 const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
@@ -40,7 +41,10 @@ export default function ResponseLog() {
   ];
 
   return (
-    <EuiPanel hasBorder>
+    <>
+      <BlockedIps />
+      <EuiSpacer />
+      <EuiPanel hasBorder>
       <EuiTitle size="xs">
         <h2>Response actions</h2>
       </EuiTitle>
@@ -67,6 +71,7 @@ export default function ResponseLog() {
           sorting={{ sort: { field: "timestamp", direction: "desc" } }}
         />
       )}
-    </EuiPanel>
+      </EuiPanel>
+    </>
   );
 }

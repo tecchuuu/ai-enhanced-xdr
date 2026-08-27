@@ -8,11 +8,12 @@ import {
   EuiFlexItem,
   EuiButtonGroup,
 } from "@elastic/eui";
-import { getHistogram, getTopSrcIps } from "../api";
+import { getHistogram, getTopSrcIps, getByCategory } from "../api";
 import StatPanels from "../components/StatPanels";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
 import TopSrcIps from "../components/TopSrcIps";
+import CategoryBreakdown from "../components/CategoryBreakdown";
 
 const RANGES = [
   { id: "6", label: "6h", interval: "10m" },
@@ -21,10 +22,11 @@ const RANGES = [
   { id: "720", label: "30d", interval: "12h" },
 ];
 
-export default function Overview({ stats, combined, loading }) {
+export default function Overview({ stats, combined, loading, onRefresh }) {
   const [rangeId, setRangeId] = useState("24");
   const [buckets, setBuckets] = useState(null);
   const [ips, setIps] = useState(null);
+  const [categories, setCategories] = useState(null);
 
   const range = RANGES.find((r) => r.id === rangeId);
 
@@ -32,13 +34,15 @@ export default function Overview({ stats, combined, loading }) {
     let alive = true;
     const load = async () => {
       try {
-        const [h, t] = await Promise.all([
+        const [h, t, c] = await Promise.all([
           getHistogram(Number(range.id), range.interval),
           getTopSrcIps(Number(range.id)),
+          getByCategory(Number(range.id)),
         ]);
         if (!alive) return;
         setBuckets(h.buckets);
         setIps(t.ips);
+        setCategories(c.categories);
       } catch {
         /* header health indicator already reports API problems */
       }
@@ -78,6 +82,8 @@ export default function Overview({ stats, combined, loading }) {
         </EuiFlexItem>
       </EuiFlexGroup>
       <EuiSpacer />
+      <CategoryBreakdown categories={categories} hours={range.label} />
+      <EuiSpacer />
       <EuiPanel hasBorder>
         <EuiTitle size="xs">
           <h2>Latest detections</h2>
@@ -86,7 +92,7 @@ export default function Overview({ stats, combined, loading }) {
           <p>Most recent events from both streams. Full feed under Security events.</p>
         </EuiText>
         <EuiSpacer size="s" />
-        <AlertsTable alerts={recent} loading={loading} />
+        <AlertsTable alerts={recent} loading={loading} onRefresh={onRefresh} />
       </EuiPanel>
     </>
   );
