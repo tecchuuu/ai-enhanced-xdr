@@ -12,13 +12,30 @@ import {
 } from "@elastic/eui";
 import { getMetrics } from "../api";
 import CategoryBreakdown from "../components/CategoryBreakdown";
-import { COLOR_RULE, COLOR_AI } from "../components/badges";
+import { usePalette } from "../theme/ThemeProvider";
 
 const RANGES = [
   { id: "24", label: "24h" },
   { id: "168", label: "7d" },
   { id: "720", label: "30d" },
 ];
+
+function Dot({ color }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: "inline-block",
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: color,
+        marginRight: 6,
+        verticalAlign: "middle",
+      }}
+    />
+  );
+}
 
 const fmtDuration = (secs) => {
   if (secs == null) return "—";
@@ -28,6 +45,7 @@ const fmtDuration = (secs) => {
 };
 
 export default function Metrics() {
+  const p = usePalette();
   const [rangeId, setRangeId] = useState("168");
   const [m, setM] = useState(null);
   const [error, setError] = useState(null);
@@ -55,16 +73,16 @@ export default function Metrics() {
   const o = m?.overlap_minutes ?? {};
 
   const tiles = [
-    { title: m?.rule_alerts ?? "—", description: "Rule alerts (level 10+)", color: COLOR_RULE },
-    { title: m?.ai_detections ?? "—", description: "AI detections", color: COLOR_AI },
-    { title: o.ai_only ?? "—", description: "Minutes AI-only (rules silent)", color: "#bd271e" },
-    { title: o.both ?? "—", description: "Minutes both fired", color: "default" },
+    { title: m?.rule_alerts ?? "—", description: "Rule alerts (level 10+)", dot: p.rule },
+    { title: m?.ai_detections ?? "—", description: "AI detections", dot: p.ai },
+    { title: o.ai_only ?? "—", description: "Minutes AI-only (rules silent)", dot: p.ai },
+    { title: o.both ?? "—", description: "Minutes both fired", dot: null },
     {
       title: m ? `${(m.false_positive_rate * 100).toFixed(1)}%` : "—",
       description: `AI false-positive rate (${m?.false_positives ?? 0} flagged)`,
-      color: "default",
+      dot: null,
     },
-    { title: fmtDuration(m?.mttr_seconds), description: "Mean time to resolve", color: "default" },
+    { title: fmtDuration(m?.mttr_seconds), description: "Mean time to resolve", dot: null },
   ];
 
   return (
@@ -104,8 +122,13 @@ export default function Metrics() {
             <EuiPanel hasBorder>
               <EuiStat
                 title={String(t.title)}
-                description={t.description}
-                titleColor={t.color}
+                description={
+                  <>
+                    {t.dot && <Dot color={t.dot} />}
+                    {t.description}
+                  </>
+                }
+                titleColor="default"
                 titleSize="l"
               />
             </EuiPanel>

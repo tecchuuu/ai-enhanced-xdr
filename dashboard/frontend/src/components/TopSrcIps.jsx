@@ -5,19 +5,21 @@ import {
   Axis,
   ScaleType,
   Position,
-  DARK_THEME,
 } from "@elastic/charts";
-import { EuiPanel, EuiTitle, EuiText, EuiSpacer, EuiEmptyPrompt } from "@elastic/eui";
-
-// single measure across categories: one hue, magnitude carried by length
-const BAR = "#5b82c2";
-
-const theme = {
-  chartMargins: { top: 8, bottom: 4, left: 4, right: 4 },
-  barSeriesStyle: { rect: { strokeWidth: 1, stroke: "#1a1a19" } },
-};
+import {
+  EuiPanel,
+  EuiTitle,
+  EuiText,
+  EuiSpacer,
+  EuiEmptyPrompt,
+} from "@elastic/eui";
+import { useTheme, usePalette, useChartTheme } from "../theme/ThemeProvider";
 
 export default function TopSrcIps({ ips, hours }) {
+  const { baseTheme } = useTheme();
+  const p = usePalette();
+  const theme = useChartTheme();
+
   return (
     <EuiPanel hasBorder>
       <EuiTitle size="xs">
@@ -27,10 +29,11 @@ export default function TopSrcIps({ ips, hours }) {
         <p>Most active alert sources, last {hours}.</p>
       </EuiText>
       <EuiSpacer size="s" />
-      {ips?.length ? (
-        <div style={{ height: 260 }}>
+      <div style={{ height: 260 }}>
+        {ips?.length ? (
           <Chart>
-            <Settings baseTheme={DARK_THEME} theme={theme} rotation={90} />
+            {/* single measure across categories: one hue, magnitude by bar length */}
+            <Settings baseTheme={baseTheme} theme={theme} rotation={90} />
             <BarSeries
               id="ips"
               name="Alerts"
@@ -38,21 +41,31 @@ export default function TopSrcIps({ ips, hours }) {
               yScaleType={ScaleType.Linear}
               xAccessor="ip"
               yAccessors={["count"]}
-              color={BAR}
+              color={p.single}
               data={ips}
             />
             <Axis id="ip" position={Position.Left} />
-            <Axis id="count" position={Position.Bottom} ticks={4} integersOnly />
+            <Axis
+              id="count"
+              position={Position.Bottom}
+              ticks={4}
+              integersOnly
+            />
           </Chart>
-        </div>
-      ) : (
-        <EuiEmptyPrompt
-          iconType="globe"
-          titleSize="xs"
-          title={<h3>No source IPs yet</h3>}
-          body={<p>No alerts carrying a source IP in the last {hours}.</p>}
-        />
-      )}
+        ) : (
+          <EuiEmptyPrompt
+            iconType="globe"
+            titleSize="xs"
+            title={<h3>No source IPs yet</h3>}
+            body={
+              <p>
+                No alerts carrying a source IP in the last {hours}. Attacks from
+                another host will populate this; loopback traffic will not.
+              </p>
+            }
+          />
+        )}
+      </div>
     </EuiPanel>
   );
 }
