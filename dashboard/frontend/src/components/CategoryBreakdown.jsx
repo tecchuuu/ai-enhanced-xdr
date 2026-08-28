@@ -55,7 +55,7 @@ export default function CategoryBreakdown({ categories, hours }) {
         </div>
       ) : (
         <EuiEmptyPrompt
-          iconType="visBarHorizontal"
+          iconType="visBarVertical"
           titleSize="xs"
           title={<h3>No categorised detections yet</h3>}
           body={<p>AI detections with an <code>ai.category</code> will break down here.</p>}

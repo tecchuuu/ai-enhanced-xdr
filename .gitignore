@@ -5,10 +5,10 @@ logs/
 archive_*.json
 auth_events.csv
 windowed_*.csv
-config/wazuh_indexer_ssl_certs/
 overnight_traffic.sh
 .env
 node_modules/
 dashboard/frontend/dist/
 *.swp
 .venv/
+wazuh/config/wazuh_indexer_ssl_certs/

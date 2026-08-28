@@ -1,7 +1,7 @@
 import json, pandas as pd
 
 rows = []
-with open("/root/archive_18.json") as f:
+with open("/home/magi/root-backup/archive_18.json") as f:
     for line in f:
         try:
             e = json.loads(line)
@@ -28,5 +28,5 @@ print(df.head(10).to_string())
 print("\nRule ID counts:\n", df["rule_id"].value_counts())
 print("\nUnique source IPs:", df["srcip"].nunique())
 print("Unique users:", df["srcuser"].nunique())
-df.to_csv("/root/auth_events.csv", index=False)
+df.to_csv("/home/magi/root-backup/auth_events.csv", index=False)
 print("\nSaved -> auth_events.csv")

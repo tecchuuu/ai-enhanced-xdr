@@ -13,7 +13,7 @@ import json, re, sys
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 
-ARCHIVE = "/root/archive_18.json"
+ARCHIVE = "/home/magi/root-backup/archive_18.json"
 WINDOW = sys.argv[1] if len(sys.argv) > 1 else "5min"   # e.g. python windowed_if_v2.py 10min
 CONTAMINATION = 0.2
 
@@ -107,6 +107,6 @@ if len(only_ai):
     print("\nWindows the rule missed but the model flagged:")
     print(only_ai[FEATURES].to_string())
 
-out = f"/root/windowed_{WINDOW}.csv"
+out = f"/home/magi/root-backup/windowed_{WINDOW}.csv"
 w.to_csv(out)
 print(f"\nSaved -> {out}")

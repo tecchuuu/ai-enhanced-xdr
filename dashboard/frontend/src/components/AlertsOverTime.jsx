@@ -69,7 +69,7 @@ export default function AlertsOverTime({ buckets, hours }) {
         </div>
       ) : (
         <EuiEmptyPrompt
-          iconType="visBarVerticalStacked"
+          iconType="visBarVertical"
           titleSize="xs"
           title={<h3>No alerts in this window</h3>}
           body={<p>Nothing at level 10+ and no AI detections in the last {hours}. Generate some traffic and this fills in.</p>}

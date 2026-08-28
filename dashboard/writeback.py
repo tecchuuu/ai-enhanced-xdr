@@ -8,7 +8,7 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 from opensearchpy import OpenSearch, helpers
 
-ARCHIVE   = "/root/archive_18.json"
+ARCHIVE   = "/home/magi/root-backup/archive_18.json"
 WINDOW    = "1min"
 AI_INDEX  = "ai-detections-2026.07.18"
 
