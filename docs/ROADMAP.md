@@ -35,5 +35,9 @@ never delay detection — same reasoning as Kafka decoupling rules from AI).
 - Detections written before Aug 2026 lack category/top_srcips (pre-enrichment).
 - Mock traffic from 127.0.0.1 is never blockable (loopback guard) — attack from
   another host (VM LAN: attack ssh on this machine from the host) to demo Block IP.
-- Producer needs docker group access (`sudo usermod -aG docker $USER`, re-login).
+  **Blocked as of 2026-08-28:** the VM adapter is NAT, so the host cannot reach it.
+  Switch to bridged (or add a port-forward) before attempting this.
+- Producer needs docker group access — **done** (2026-08-28): `magi` is in the `docker` group, so plain `docker` works and the pipeline runs as the desktop user, not root.
+- Console colors live in `dashboard/frontend/src/theme/palette.js`, one validated
+  set per color mode. Do not add a hex anywhere else — dark is not a flip of light.
 - Full design history: `docs/dashboard-plan.md`.
