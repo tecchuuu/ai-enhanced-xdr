@@ -59,3 +59,11 @@ export function blockIp({ agentId, srcip, alertRef, reason }) {
 export function unblockIp({ agentId, srcip, reason }) {
   return postJson("/api/response/unblock-ip", { agent_id: agentId, srcip, reason });
 }
+
+export function explainAlert(alertId, provider) {
+  return postJson("/api/explain", { alert_id: alertId, provider });
+}
+
+export function explainChat(alertId, messages, provider) {
+  return postJson("/api/explain/chat", { alert_id: alertId, messages, provider });
+}

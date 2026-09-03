@@ -50,6 +50,32 @@ indices.
 - `mttr_seconds` = mean(`updated_at` − `alert_timestamp`) over triage records in
   `resolved` / `false_positive`.
 
+### `/api/explain` + `/api/explain/chat` (analyst assistant)
+`POST /api/explain {alert_id, provider?}` for an AI detection (`ai:<_id>`).
+Fetches the detection from `ai-detections-*`, runs `dashboard/explainer.py`, and
+writes the result back onto the document as `ai.explanation` (+ `ai.explained_by`,
+`ai.explained_at`) with a partial `update` so the other `ai.*` fields survive.
+The text is returned to the caller even if the writeback fails
+(`persisted: false`).
+
+`POST /api/explain/chat {alert_id, messages: [{role, content}], provider?}` —
+follow-up Q&A. The **thread lives in the client** (the flyout), not the server
+and not the detection doc; each call re-sends the running thread and the server
+injects the detection as system context. Capped at 20 messages. Nothing is
+persisted — closing the flyout discards the conversation (the one-shot
+explanation stays because it's on the doc).
+
+Provider = `EXPLAINER_PROVIDER` env var, overridable per call:
+- `mock` (default) — deterministic template per `ai.category`, built from the
+  detection's own numbers. No model, no network. The honest fallback state.
+- `ollama` — local model, `OLLAMA_URL` / `OLLAMA_MODEL`. Untested.
+- `anthropic` — hosted Claude, `pip install anthropic` + `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_MODEL` (default `claude-opus-5`; `claude-haiku-4-5` is plenty and
+  cheaper). Sends detection fields (IPs, usernames) off-box. Untested.
+
+The flyout shows the explanation for AI alerts with an "Explain this detection" /
+"Regenerate" button.
+
 ## Known limitations (state these in the report)
 
 1. **Unblock is best-effort.** Wazuh's manager API has no documented "undo
@@ -77,6 +103,11 @@ indices.
 - [ ] `by_category` returns buckets (confirms the `.keyword` field assumption).
 - [ ] Block an IP from another host → it appears in **Currently blocked** →
       unblock → it leaves the list and a `unblock-ip` row lands in the audit log.
+- [ ] `POST /api/explain` on a real detection → text comes back, `ai.explanation`
+      is persisted (re-open the flyout, it's still there), other `ai.*` fields
+      intact. Then ask a follow-up in the panel → `/api/explain/chat` replies.
+      Mock provider works offline; try `ollama` once a model is pulled, or
+      `EXPLAINER_PROVIDER=anthropic` with a key.
 - [ ] Frontend builds: `cd dashboard/frontend && npm install && npm run build`
       (not run here — no Node on the build machine).
 

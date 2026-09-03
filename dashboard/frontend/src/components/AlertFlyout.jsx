@@ -23,6 +23,7 @@ import {
 import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
 import { setTriage } from "../api";
 import BlockIpModal from "./BlockIpModal";
+import ExplainPanel from "./ExplainPanel";
 
 const STATUS_OPTIONS = TRIAGE_STATES.map((s) => ({
   id: s,
@@ -181,6 +182,13 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
             </>
           )}
         </EuiPanel>
+
+        {alert.source === "ai" && (
+          <>
+            <EuiSpacer />
+            <ExplainPanel alert={alert} onRefresh={onRefresh} />
+          </>
+        )}
 
         <EuiSpacer />
         <EuiDescriptionList type="column" listItems={items} compressed />

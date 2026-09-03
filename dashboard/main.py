@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from opensearchpy import OpenSearch
 from pydantic import BaseModel
 
+import explainer
 import wazuh_api
 
 app = FastAPI(title="AI-XDR Dashboard API")
@@ -156,6 +157,8 @@ def ai_alerts(limit: int = 50):
             "mitre":       ai.get("mitre"),
             "srcip":       top_ips[0]["ip"] if top_ips else None,
             "top_srcips":  top_ips,
+            "explanation": ai.get("explanation"),
+            "explained_by": ai.get("explained_by"),
         })
     return {"count": res["hits"]["total"]["value"], "alerts": _merge_triage(out)}
 
@@ -539,3 +542,96 @@ def metrics(hours: int = 168):
         "triaged": len(tdocs),
         "by_category": _category_agg(start),
     }
+
+
+# ----------------------------------------------------------------- explanation
+
+class ExplainRequest(BaseModel):
+    alert_id: str                 # "ai:<opensearch _id>"
+    provider: str | None = None   # override EXPLAINER_PROVIDER for this call
+
+
+@app.post("/api/explain")
+def explain_alert(req: ExplainRequest):
+    """Generate a plain-English analyst note for one AI detection and write it
+    back onto the detection document (ai.explanation). On-demand only — the
+    explainer is a reader, never in the detection path."""
+    if not req.alert_id.startswith("ai:"):
+        raise HTTPException(status_code=400,
+                            detail="explanations are only generated for AI detections")
+    doc_id = req.alert_id.split(":", 1)[1]
+
+    try:
+        res = client.search(index="ai-detections-*", body={
+            "size": 1, "query": {"ids": {"values": [doc_id]}},
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
+
+    hits = res["hits"]["hits"]
+    if not hits:
+        raise HTTPException(status_code=404, detail="detection not found")
+    hit = hits[0]
+
+    try:
+        text, provider_used = explainer.explain(hit["_source"], provider=req.provider)
+    except Exception as e:
+        name = req.provider or explainer.PROVIDER
+        raise HTTPException(status_code=502,
+                            detail=f"explainer '{name}' failed: {e}")
+
+    patch = {"explanation": text, **explainer.metadata(provider_used)}
+    try:
+        client.update(index=hit["_index"], id=doc_id,
+                      body={"doc": {"ai": patch}}, refresh=True)
+    except Exception as e:
+        # explanation still returned to the caller even if the writeback fails
+        return {"ok": True, "explanation": text, "provider": provider_used,
+                "persisted": False, "detail": str(e)}
+
+    return {"ok": True, "explanation": text, "provider": provider_used,
+            "persisted": True}
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ExplainChatRequest(BaseModel):
+    alert_id: str
+    messages: list[ChatMessage]
+    provider: str | None = None
+
+
+@app.post("/api/explain/chat")
+def explain_chat(req: ExplainChatRequest):
+    """Follow-up Q&A about one AI detection. The thread lives in the client;
+    the server injects the detection as context and returns the next reply."""
+    if not req.alert_id.startswith("ai:"):
+        raise HTTPException(status_code=400,
+                            detail="chat is only available for AI detections")
+    if len(req.messages) > 20:
+        raise HTTPException(status_code=400, detail="thread too long")
+    doc_id = req.alert_id.split(":", 1)[1]
+
+    try:
+        res = client.search(index="ai-detections-*", body={
+            "size": 1, "query": {"ids": {"values": [doc_id]}},
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
+
+    hits = res["hits"]["hits"]
+    if not hits:
+        raise HTTPException(status_code=404, detail="detection not found")
+
+    thread = [{"role": m.role, "content": m.content} for m in req.messages]
+    try:
+        reply, provider_used = explainer.chat(hits[0]["_source"], thread,
+                                              provider=req.provider)
+    except Exception as e:
+        name = req.provider or explainer.PROVIDER
+        raise HTTPException(status_code=502, detail=f"explainer '{name}' failed: {e}")
+
+    return {"ok": True, "reply": reply, "provider": provider_used}
