@@ -1,13 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { EuiProvider } from "@elastic/eui";
-import "@elastic/charts/dist/theme_only_dark.css";
+import { ThemeProvider } from "./theme/ThemeProvider";
 import App from "./App";
 
+// Chart CSS is loaded by ThemeProvider (it swaps per color mode), so nothing
+// theme-specific is imported here.
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <EuiProvider colorMode="dark">
+    <ThemeProvider>
       <App />
-    </EuiProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );

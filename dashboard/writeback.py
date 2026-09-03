@@ -3,18 +3,22 @@ Takes Isolation Forest results on real auth windows and writes flagged
 anomalies into OpenSearch as AI detections, tagged source=ai.
 This is the writeback loop from project_plan.md.
 """
-import json, re
+import json, os, re
 import pandas as pd
+from dotenv import load_dotenv
 from sklearn.ensemble import IsolationForest
 from opensearchpy import OpenSearch, helpers
 
-ARCHIVE   = "/root/archive_18.json"
+load_dotenv()  # same credential source as the API (dashboard/.env, git-ignored)
+
+ARCHIVE   = "/home/magi/root-backup/archive_18.json"
 WINDOW    = "1min"
 AI_INDEX  = "ai-detections-2026.07.18"
 
 client = OpenSearch(
-    hosts=[{"host": "localhost", "port": 9200}],
-    http_auth=("admin", "SecretPassword"),
+    hosts=[{"host": os.environ.get("OS_HOST", "localhost"),
+            "port": int(os.environ.get("OS_PORT", "9200"))}],
+    http_auth=(os.environ.get("OS_USER", "admin"), os.environ.get("OS_PASS", "")),
     use_ssl=True, verify_certs=False, ssl_show_warn=False,
 )
 

@@ -57,7 +57,7 @@ export default function ResponseLog() {
       <EuiSpacer size="s" />
       {actions?.length === 0 ? (
         <EuiEmptyPrompt
-          iconType="securitySignal"
+          iconType="securitySignalDetected"
           titleSize="xs"
           title={<h3>No actions taken yet</h3>}
           body={<p>Block an IP from an alert's detail panel and it will appear here.</p>}

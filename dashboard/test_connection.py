@@ -1,8 +1,14 @@
+import os
+
+from dotenv import load_dotenv
 from opensearchpy import OpenSearch
 
+load_dotenv()
+
 client = OpenSearch(
-    hosts=[{"host": "localhost", "port": 9200}],
-    http_auth=("admin", "SecretPassword"),
+    hosts=[{"host": os.environ.get("OS_HOST", "localhost"),
+            "port": int(os.environ.get("OS_PORT", "9200"))}],
+    http_auth=(os.environ.get("OS_USER", "admin"), os.environ.get("OS_PASS", "")),
     use_ssl=True,
     verify_certs=False,        # self-signed cert from your cert generator
     ssl_show_warn=False,

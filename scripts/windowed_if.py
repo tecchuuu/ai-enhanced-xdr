@@ -3,7 +3,7 @@ from sklearn.ensemble import IsolationForest
 
 # ---------- 1. Load raw events (incl. rule id, for the rule-vs-AI comparison) ----------
 rows = []
-with open("/root/archive_18.json") as f:
+with open("/home/magi/root-backup/archive_18.json") as f:
     for line in f:
         try:
             e = json.loads(line)
@@ -68,5 +68,5 @@ if len(caught_only_by_ai):
     print("\nWindows the rule missed but AI caught:")
     print(caught_only_by_ai[FEATURES].to_string())
 
-w.to_csv("/root/windowed_features.csv")
+w.to_csv("/home/magi/root-backup/windowed_features.csv")
 print("\nSaved -> windowed_features.csv")

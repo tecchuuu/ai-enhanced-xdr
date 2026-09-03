@@ -5,20 +5,22 @@ import {
   Axis,
   ScaleType,
   Position,
-  DARK_THEME,
   niceTimeFormatter,
 } from "@elastic/charts";
-import { EuiPanel, EuiTitle, EuiText, EuiSpacer, EuiEmptyPrompt } from "@elastic/eui";
-import { COLOR_RULE, COLOR_AI } from "./badges";
-
-// theme tweaks per mark spec: thin bars separated by a surface-colored stroke
-const theme = {
-  chartMargins: { top: 8, bottom: 4, left: 4, right: 4 },
-  barSeriesStyle: { rect: { strokeWidth: 1, stroke: "#1a1a19" } },
-  scales: { barsPadding: 0.25 },
-};
+import {
+  EuiPanel,
+  EuiTitle,
+  EuiText,
+  EuiSpacer,
+  EuiEmptyPrompt,
+} from "@elastic/eui";
+import { useTheme, usePalette, useChartTheme } from "../theme/ThemeProvider";
 
 export default function AlertsOverTime({ buckets, hours }) {
+  const { baseTheme } = useTheme();
+  const p = usePalette();
+  const theme = useChartTheme();
+
   const hasData = buckets?.some((b) => b.rule || b.ai);
   const domain =
     buckets?.length > 1
@@ -32,15 +34,21 @@ export default function AlertsOverTime({ buckets, hours }) {
       </EuiTitle>
       <EuiText size="s" color="subdued">
         <p>
-          Rule alerts (level 10+) and AI detections per interval, last {hours}. Teal with
-          no orange beside it = the model caught something the ruleset stayed silent on.
+          Rule alerts (level 10+) and AI detections per interval, last {hours}.
+          A teal bar with no orange beside it = the model caught something the
+          ruleset stayed silent on.
         </p>
       </EuiText>
       <EuiSpacer size="s" />
-      {hasData ? (
-        <div style={{ height: 260 }}>
+      <div style={{ height: 260 }}>
+        {hasData ? (
           <Chart>
-            <Settings baseTheme={DARK_THEME} theme={theme} showLegend legendPosition={Position.Bottom} />
+            <Settings
+              baseTheme={baseTheme}
+              theme={theme}
+              showLegend
+              legendPosition={Position.Bottom}
+            />
             <BarSeries
               id="rule"
               name="Rule alerts"
@@ -49,7 +57,7 @@ export default function AlertsOverTime({ buckets, hours }) {
               xAccessor="time"
               yAccessors={["rule"]}
               stackAccessors={["time"]}
-              color={COLOR_RULE}
+              color={p.rule}
               data={buckets}
             />
             <BarSeries
@@ -60,21 +68,30 @@ export default function AlertsOverTime({ buckets, hours }) {
               xAccessor="time"
               yAccessors={["ai"]}
               stackAccessors={["time"]}
-              color={COLOR_AI}
+              color={p.ai}
               data={buckets}
             />
-            <Axis id="x" position={Position.Bottom} tickFormat={niceTimeFormatter(domain)} />
+            <Axis
+              id="x"
+              position={Position.Bottom}
+              tickFormat={niceTimeFormatter(domain)}
+            />
             <Axis id="y" position={Position.Left} ticks={4} integersOnly />
           </Chart>
-        </div>
-      ) : (
-        <EuiEmptyPrompt
-          iconType="visBarVerticalStacked"
-          titleSize="xs"
-          title={<h3>No alerts in this window</h3>}
-          body={<p>Nothing at level 10+ and no AI detections in the last {hours}. Generate some traffic and this fills in.</p>}
-        />
-      )}
+        ) : (
+          <EuiEmptyPrompt
+            iconType="visBarVertical"
+            titleSize="xs"
+            title={<h3>No alerts in this window</h3>}
+            body={
+              <p>
+                Nothing at level 10+ and no AI detections in the last {hours}.
+                Generate some traffic, or widen the time range.
+              </p>
+            }
+          />
+        )}
+      </div>
     </EuiPanel>
   );
 }

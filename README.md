@@ -87,7 +87,9 @@ with rule + AI alerts, time charts, threat categories, alert detail flyout,
 per-alert triage (status / assignee / note / mark-false-positive), a **Metrics**
 page (live rule-vs-AI comparison, false-positive rate, MTTR), one-click IP
 blocking via Wazuh Active Response with an unblock action and current-block
-view, audit-logged response history, and live agent status. The original
+view, audit-logged response history, and live agent status. Light and dark modes are
+both selectable (header toggle, persisted); each has its own validated color
+steps in `src/theme/palette.js` rather than one being a flip of the other. The original
 detection-split demo view remains at `dashboard/dashboard.html`. Console
 internals and contracts: `docs/dashboard-build-notes.md`.
 

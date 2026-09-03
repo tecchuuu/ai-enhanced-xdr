@@ -1,32 +1,36 @@
 import { EuiBadge } from "@elastic/eui";
+import { usePalette } from "../theme/ThemeProvider";
 
-// series colors, validated for the dark surface (dataviz six-checks)
-export const COLOR_RULE = "#c17e15";
-export const COLOR_AI = "#0ca58c";
-
-// source of a detection: Wazuh ruleset vs the AI pipeline
+// source of a detection: Wazuh ruleset vs the AI pipeline.
+// The label carries the identity; the color only reinforces it.
 export function SourceBadge({ source }) {
+  const p = usePalette();
   return source === "ai" ? (
-    <EuiBadge color={COLOR_AI}>AI model</EuiBadge>
+    <EuiBadge color={p.ai}>AI model</EuiBadge>
   ) : (
-    <EuiBadge color={COLOR_RULE}>rule</EuiBadge>
+    <EuiBadge color={p.rule}>rule</EuiBadge>
   );
 }
 
 // Wazuh severity convention: 12+ critical, 10+ high, 7+ medium, below = low
-export function severityOf(level) {
-  if (level >= 12) return { name: "critical", color: "danger" };
-  if (level >= 10) return { name: "high", color: "#bd271e" };
-  if (level >= 7) return { name: "medium", color: "warning" };
-  return { name: "low", color: "hollow" };
+export function severityName(level) {
+  if (level >= 12) return "critical";
+  if (level >= 10) return "high";
+  if (level >= 7) return "medium";
+  return "low";
 }
 
+// Only the top two tiers are filled. Color earns attention by being rare — when
+// every row is a saturated badge, none of them read as urgent.
 export function SeverityBadge({ level }) {
+  const p = usePalette();
   if (level == null) return <EuiBadge color="hollow">—</EuiBadge>;
-  const s = severityOf(level);
+  const name = severityName(level);
+  const color =
+    name === "critical" ? "danger" : name === "high" ? p.high : "hollow";
   return (
-    <EuiBadge color={s.color}>
-      {s.name} ({level})
+    <EuiBadge color={color}>
+      {name} ({level})
     </EuiBadge>
   );
 }

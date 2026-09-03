@@ -5,23 +5,26 @@ import {
   Axis,
   ScaleType,
   Position,
-  DARK_THEME,
 } from "@elastic/charts";
-import { EuiPanel, EuiTitle, EuiText, EuiSpacer, EuiEmptyPrompt } from "@elastic/eui";
-
-// single measure across categories: one hue, magnitude carried by bar length
-const BAR = "#0ca58c";
-
-const theme = {
-  chartMargins: { top: 8, bottom: 4, left: 4, right: 4 },
-  barSeriesStyle: { rect: { strokeWidth: 1, stroke: "#1a1a19" } },
-  scales: { barsPadding: 0.25 },
-};
+import {
+  EuiPanel,
+  EuiTitle,
+  EuiText,
+  EuiSpacer,
+  EuiEmptyPrompt,
+} from "@elastic/eui";
+import { useTheme, usePalette, useChartTheme } from "../theme/ThemeProvider";
 
 const pretty = (c) => (c ? c.replace(/_/g, " ") : "—");
 
 export default function CategoryBreakdown({ categories, hours }) {
-  const data = (categories ?? []).map((c) => ({ ...c, label: pretty(c.category) }));
+  const { baseTheme } = useTheme();
+  const p = usePalette();
+  const theme = useChartTheme();
+  const data = (categories ?? []).map((c) => ({
+    ...c,
+    label: pretty(c.category),
+  }));
 
   return (
     <EuiPanel hasBorder>
@@ -30,15 +33,17 @@ export default function CategoryBreakdown({ categories, hours }) {
       </EuiTitle>
       <EuiText size="s" color="subdued">
         <p>
-          Heuristic post-classification of anomalous windows{hours ? `, last ${hours}` : ""}.
-          The model flags the deviation; the category makes it triageable.
+          Heuristic post-classification of anomalous windows
+          {hours ? `, last ${hours}` : ""}. The model flags the deviation; the
+          category makes it triageable.
         </p>
       </EuiText>
       <EuiSpacer size="s" />
-      {data.length ? (
-        <div style={{ height: 260 }}>
+      <div style={{ height: 260 }}>
+        {data.length ? (
           <Chart>
-            <Settings baseTheme={DARK_THEME} theme={theme} rotation={90} />
+            {/* single measure across categories: one hue, magnitude by bar length */}
+            <Settings baseTheme={baseTheme} theme={theme} rotation={90} />
             <BarSeries
               id="cat"
               name="Detections"
@@ -46,21 +51,31 @@ export default function CategoryBreakdown({ categories, hours }) {
               yScaleType={ScaleType.Linear}
               xAccessor="label"
               yAccessors={["count"]}
-              color={BAR}
+              color={p.ai}
               data={data}
             />
             <Axis id="cat" position={Position.Left} />
-            <Axis id="count" position={Position.Bottom} ticks={4} integersOnly />
+            <Axis
+              id="count"
+              position={Position.Bottom}
+              ticks={4}
+              integersOnly
+            />
           </Chart>
-        </div>
-      ) : (
-        <EuiEmptyPrompt
-          iconType="visBarHorizontal"
-          titleSize="xs"
-          title={<h3>No categorised detections yet</h3>}
-          body={<p>AI detections with an <code>ai.category</code> will break down here.</p>}
-        />
-      )}
+        ) : (
+          <EuiEmptyPrompt
+            iconType="visBarVertical"
+            titleSize="xs"
+            title={<h3>No categorised detections yet</h3>}
+            body={
+              <p>
+                Nothing in this range. Generate traffic and give the consumer
+                ~10 minutes to fill its window buffer, or widen the time range.
+              </p>
+            }
+          />
+        )}
+      </div>
     </EuiPanel>
   );
 }
