@@ -247,28 +247,53 @@ All three were caught before the run mattered, but each would have silently degr
 
 ---
 
+### Entry 18 — RESOLVED: hardware constraint lifted, SIAM AI provisioned H100 + BlueField-3 (Sep 2026)
+
+**What changed.** SIAM AI Cloud delivered the promised resources (consent form signed; window 2 Sep – 30 Nov 2026): an Ubuntu 24.04 VM with 14 vCPU / 224GB RAM / 3.4TB disk / **1× NVIDIA H100 80GB (passthrough)** / **1× NVIDIA BlueField-3 DPU (passthrough)**, over VPN+SSH. The VM is shared with another student group.
+
+**What this resolves.** Three constraints logged earlier are now lifted, and the log should show the resolution rather than have the old entries edited:
+- **Entry (Decision — Morpheus deferred to CPU-equivalent + optional GPU demo):** the deferral reason — no local CUDA GPU (AMD RX 5700 XT) — no longer applies. Morpheus moves from "documented deployment target" to *actual deployment* on the H100. **The original entry stays as written** (it was correct when made); this entry is its resolution.
+- **RAM as binding constraint:** true on the 10–12GB local VM, not on the 224GB provided VM. Heap caps / sequential startup were local survival tactics, not design choices.
+- **Local LLM kept off-box (tiny model / API):** the H100 runs a real 20–70B model locally. LLM alert explanation (SIAM goal #3) is now deployable, not a compromise.
+
+**What it does NOT change (guard against scope creep).**
+- The one-sentence scope and the coherent-slice rule are unchanged. Having a big GPU is not a reason to widen the core; domain coherence, not compute, drove that decision.
+- The CPU proof-of-method (mock IF 5/5 @ ~1% FPR; R10 ground-truth-verified degradation) still stands alone as Claim B, and remains the fallback if the GPU/DPU work runs short. Deployment on real hardware is an *addition*, not a replacement.
+
+**Partial reversal to record honestly (see "Decision — Dropped CICIDS2017 / network-flow benchmarks entirely").** That decision was correct *for the auth-log lane* — network-flow benchmarks don't transfer to host/auth data, and mixing domains in one model is feature soup. It is **not** reversed for the auth lane. However, the BlueField-3 now makes a *separate* network lane viable (Suricata on the DPU → network flows → separate Kafka consumer → separate model). In that lane, and only that lane, network-flow data (incl. CICIDS2017 as an offline benchmark) becomes relevant again — as a second coherent slice, never merged with auth. The original "dropped entirely" wording should be footnoted to this effect, not deleted: it was right about not forcing network data through the auth pipeline.
+
+**New constraints introduced by the provided environment (log these as live risks).**
+- Shared VM: isolate in Docker, coordinate ports, never attack outside own containers; H100 + DPU shared, so no assumption of exclusive access.
+- Possible egress lockdown: test `curl github.com` early; `scp` over VPN as fallback.
+- Hard deadline 30 Nov: hardware-bound work (Morpheus deploy, DPU lane) is now the critical path; VM contents vanish at window close.
+- Consent form clause 4 puts data loss on the student → continuous git push + external backup.
+- Long jobs in tmux/screen (VPN drop kills bare SSH sessions).
+
+**Diagnosis lesson (for บทที่ 5).** A resource constraint that shapes early architecture decisions is not a failure to hide — the honest record is "constrained → designed a CPU-provable equivalent → constraint later lifted → deployed the real thing," which demonstrates the design was sound independent of the hardware it eventually ran on. The CPU equivalence result is *more* valuable now, not less: it proves the method wasn't dependent on the H100.
+
+---
+
 ## PHASE: Repository hygiene + console revamp (2026-08-28)
 
-### Entry 18 — Wazuh CA private key published to a public repo (mis-anchored .gitignore)
+### Entry 19 — Wazuh CA private key published to a public repo (mis-anchored .gitignore)
 - `.gitignore` contained `config/wazuh_indexer_ssl_certs/`. A pattern containing a slash is anchored to the repository root, so it matched `./config/...` and never `wazuh/config/...`, which is the actual location. The rule looked correct and did nothing.
 - Consequence: `root-ca.key`, `admin-key.pem`, and the indexer/manager/dashboard private keys were tracked from the initial commit `020b39c` and pushed to a public GitHub repository.
-- Practical risk was low (self-signed lab certs, NAT'd VM, not internet-facing) but the exposure was real, and `SecretPassword` — the published Wazuh default — is still inline in `dashboard/writeback.py`.
+- Practical risk was low (self-signed lab certs, NAT'd VM, not internet-facing) but the exposure was real, and `SecretPassword` — the published Wazuh default — was still inline in `dashboard/writeback.py` at the time (since moved to `.env`; see BUILD STATUS).
 - **Fix:** re-anchored the rule to `wazuh/config/wazuh_indexer_ssl_certs/`, `git rm -r --cached` on the directory, then regenerated the full chain via `generate-indexer-certs.yml` and restarted the stack. New root CA serial `6AFA7BD9...` replaces `0FC7A26A...`; containers restarted after issuance, so the new chain is in effect.
 - **Reasoning for not rewriting history:** once the certs are regenerated, the exposed keys authenticate nothing. `git filter-repo` would buy tidiness, not security, and costs a force-push. Judged not worth it.
 - **Lesson for บทที่ 5:** a security tool leaked its own trust anchor through a config file that read as correct. Ignore rules must be verified with `git check-ignore -v`, not by reading them. This is a concrete instance of the project's own thesis — the failure was invisible to inspection and only surfaced under a test.
 
-### Entry 19 — Python venv broke silently on directory rename
+### Entry 20 — Python venv broke silently on directory rename
 - Renamed `~/xdr-project` to `~/ai-enhanced-xdr`. `start_all.sh` derives its own root from `$BASH_SOURCE`, so it survived; the virtualenv did not.
 - Every script in `ml-venv/bin/` carries an absolute shebang (`#!/home/magi/xdr-project/ml-venv/bin/python3`) and `pyvenv.cfg` records the creation path. 14 files affected.
 - A grep over `*.py` and `*.sh` reported no hardcoded paths and was wrong — venv console scripts have no file extension and were never matched.
 - **Fix:** rewrote the path across `ml-venv/bin/*` and `pyvenv.cfg`. `python -m venv --clear` would achieve the same and is the more reliable habit.
 
-### Entry 20 — Console: invalid icon names, wrong spacer color, unvalidated palette
+### Entry 21 — Console: invalid icon names, wrong spacer color, unvalidated palette
 - Three `iconType` values do not exist in EUI 119: `visBarHorizontal`, `visBarVerticalStacked`, `securitySignal`. EUI renders a placeholder for unknown types, which appeared as a broken-image glyph *inside empty-state panels only* — so it surfaced exactly where a chart had no data, and read as two unrelated bugs rather than one.
 - All three bar charts hardcoded `stroke: "#1a1a19"` as the inter-bar spacer, but the EUI Borealis dark surface is `#0B1628` (navy). The separator was the wrong color in the only mode in use.
 - Palette re-validated against each surface. The existing rule/AI pair passed colorblind separation (worst adjacent ΔE 13.0), but `#bd271e` scored **2.99:1 contrast — below the 3:1 floor**, which is why high-severity badges read as muddy rather than urgent.
-- **Changes:** rule alerts `#c17e15` → `#d95926` (mustard against navy is a complementary clash), high severity `#bd271e` → `#e66767`, AI teal `#0ca58c` unchanged. Light mode was given independently validated steps rather than an automatic flip of dark.
-- Stat figures moved to text ink with an 8px colored dot carrying identity: four large saturated numerals meant none of them read as the headline. "Model-only catches" is now the hero tile, since it is the number the project exists to produce.
+- **Changes:** rule alerts `#c17e15` → `#d95926` (mustard against navy is a complementary clash), high severity `#bd271e` → `#e66767`, AI teal `#0ca58c` unchanged. Light mode was given independently validated steps rather than an automatic flip of dark. Palette is now centralised in `src/theme/palette.js`, with light/dark modes wired through `src/theme/ThemeProvider.jsx`.
 
 ### Note — detection plane moved off root; project relocated
 - Everything now runs as `magi` (added to the `docker` group). The producer no longer requires `sudo docker`, closing the item recorded in the earlier `/root` permissions note.
@@ -280,24 +305,29 @@ All three were caught before the run mattered, but each would have silently degr
 - Detections from the overnight run carry no `category` and no `top_srcips`; both fields were added after that run. The category chart is therefore empty at every available time range, and the detections themselves (2026-07-19) fall outside even the 30-day window.
 - Not a defect: `detection_consumer.py` writes both fields at lines 169/188. But **the enrichment path has never been observed producing output**, and confirming it requires a fresh traffic run. Until then the category feature is claimed, not demonstrated.
 
+### Note — credentials moved to .env; VM switched to bridged networking (2026-09-07)
+- OpenSearch credentials (`admin`/`SecretPassword`) moved out of source into `dashboard/.env` across `dashboard/writeback.py`, `dashboard/test_connection.py`, and `ai-stack/pipeline/detection_consumer.py` (the consumer loads it via `load_dotenv(parents[2]/"dashboard"/".env")` since it lives outside `dashboard/`). `grep` over tracked source no longer returns the password. This resolves the security-debt item carried since Entry 19.
+- VM network adapter switched from VMware **NAT** to **bridged**; the VM now holds a routable LAN address (was `192.168.218.131` on the NAT subnet, now `192.168.1.142` via DHCP — a bridged DHCP lease can change on reboot, so a static reservation is worth setting before the traffic run). `ufw` is active; allow `22/tcp` (and `80/tcp` for the web lane) so incoming attack traffic from a second host is not dropped. This unblocks the fresh-traffic run — real off-host `srcip` values, the first enriched AI detections, and a demonstrable Block IP.
+
 ---
 
-## BUILD STATUS (last updated: 2026-08-28 — repo hygiene + console revamp)
+## BUILD STATUS (last updated: 2026-09-07 — bridged network + docs refresh)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
   - Mock: Isolation Forest caught 5/5 planted anomalies, ~1% FPR, CPU. Claim B on controlled labelled data.
   - Real: SSH server + Wazuh agent (`ubuntu-vm`) deployed and Active; endpoint → agent → manager → decode → `archives.json` proven; feature engineering working (JSON → windowed features). One genuine model-only detection at 05:32 + one acknowledged false positive.
 - **OVERNIGHT EVALUATION COMPLETE:** ~7.5 h run, 4,057 events, three attack episodes at 3 s / 30 s / 75 s spacing with independent ground-truth timestamps. **Rules detected episodes 1 and 2 (2 alerts each) and produced zero alerts for episode 3; the model produced detections in all three.** 34 AI detections written. This is the headline result (R10).
+- **Step 8 SAD diagrams COMPLETE:** Context Diagram, DFD Level 1, Data Dictionary, and State Diagram written as Mermaid source in `docs/sad_diagrams_chapter3.md`, describing the system as built with divergences from the proposal noted. This closes what was previously the largest documentation gap.
+- **HARDWARE PROVISIONED (see Entry 18):** SIAM AI H100 80GB + BlueField-3 DPU VM available 2 Sep – 30 Nov 2026. Morpheus and the local LLM move from "documented target" to actual deployment targets; the DPU enables the Phase 2 network lane. Not yet accessed — VPN/SSH onboarding is the next hardware step.
 - **Results banked for บทที่ 4:** (1) mock IF 5/5 @ ~1% FPR; (2) **R10 — detection degradation by attack speed, ground-truth verified**; (3) alert reduction (384 rule alerts → 5 model detections in the earlier session); (4) anomaly *scores* provide ranking, not binary thresholds; (5) live streaming pipeline demonstrated end-to-end.
 - **KNOWN DATA LIMITATIONS (state in บทที่ 5):** single-host lab data, one source IP (127.0.0.1 — `srcip` unusable as a feature), single monitored endpoint, episode-3 detections are weak-signal, host suspension created a ~3 h baseline gap.
 - **REMAINING WORK:**
-  1. **SAD diagrams (Step 8)** — Context Diagram, DFD Level 1, Data Dictionary, State Diagram. **Required บทที่ 3 artifacts.** Pure tracing of a system that already exists; no code. Highest priority — this is the largest documentation gap, and it has not moved.
-  1a. **Fresh traffic run from a second host** — switch the VM adapter from NAT to bridged, then attack from the host machine. This single run unblocks three things at once: real `srcip` values (loopback is refused by the block-ip guardrail, so Block IP is currently undemonstrable), the first AI detections carrying `category`/`top_srcips`, and a non-empty console. See the enrichment note above.
-  1b. **Web detector on Apache :80** — roadmap item #1, the `web` row (4xx ratio, URL diversity). Chosen over further auth-domain work because simple brute force is precisely what the ruleset already catches; the AI side needs an evasive web variant to have anything to add. Clone `detection_consumer.py` with the HTTP feature set; the dashboard and backend need no changes.
-  2. **Write up บทที่ 4 and 5** from `results_log_chapter4.md` and this file. Raw material is complete; the prose is not written.
-  3. **Local LLM alert explanation** — pretrained download from Hugging Face (Typhoon-7B / Llama-3.2). SIAM goal #3.
-  4. **Autoencoder** — model step-up, comparison against Isolation Forest.
-  5. Optional: multi-scale windowing analysis (1 / 5 / 15 min) on the overnight dataset — the data now supports it and it directly addresses the slow-attack question.
-- **Security debt outstanding:** `dashboard/writeback.py` still carries `admin`/`SecretPassword` inline and is tracked in git; move to `.env` alongside the other credentials. The stale July cert copy under `wazuh/config/wazuh_indexer_ssl_certs/` is dead since regeneration and should be deleted so there is one source of truth.
+  1. **Fresh traffic run from a second host** — bridged networking is now in place; attack from the host machine over the LAN. This single run unblocks three things at once: real `srcip` values (loopback is refused by the block-ip guardrail, so Block IP is currently undemonstrable), the first AI detections carrying `category`/`top_srcips`, and a non-empty console. See the enrichment note above.
+  2. **Web detector on Apache :80** — roadmap item #1, the `web` row (4xx ratio, URL diversity). Chosen over further auth-domain work because simple brute force is precisely what the ruleset already catches; the AI side needs an evasive web variant to have anything to add. Clone `detection_consumer.py` with the HTTP feature set; the dashboard and backend need no changes.
+  3. **Write up บทที่ 4 and 5** from `results_log.md` and this file. Raw material is complete; the prose is not written. SAD source for บทที่ 3 is now done (`sad_diagrams_chapter3.md`).
+  4. **Local LLM alert explanation** — now deployable on the provided H100 (vLLM + a 20–70B model), on-demand. SIAM goal #3.
+  5. **Autoencoder** — model step-up, comparison against Isolation Forest.
+  6. **Phase 2 — DPU network lane** — Suricata on the BlueField → EVE JSON → same Kafka → separate consumer + separate model. Gated behind landing the auth lane on the provided VM first.
+  7. Optional: multi-scale windowing analysis (1 / 5 / 15 min) on the overnight dataset — the data now supports it and it directly addresses the slow-attack question.
+- **Security debt outstanding:** OpenSearch credentials are now in `dashboard/.env` (resolved). Remaining: the stale July cert copy under `wazuh/config/wazuh_indexer_ssl_certs/` is dead since regeneration and should be deleted so there is one source of truth.
 - **Fixes to apply before any future unattended run:** `python -u` for the consumer (unbuffered logging); disable host sleep; randomise attack times/intensities rather than repeating a fixed schedule.
-- No Morpheus locally (deployment target; optional Colab GPU demo later).

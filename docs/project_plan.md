@@ -4,8 +4,6 @@
 
 > **How to read this:** This is base knowledge to work from, not gospel. Verify specifics (exact configs, versions, your course's report template) against official docs and your advisor. The *reasoning* and *sequence* here are sound; treat exact commands/settings as "look them up when you get there."
 
-> **Historical note:** This is the *original* plan, written before implementation. Reality diverged in places (e.g. a Python producer replaced the planned Filebeat→Kafka hop; the dashboard became a React/EUI console) — every deviation and the reasoning behind it is recorded in `failure_log.md`. Current forward plan: `ROADMAP.md`.
-
 ---
 
 ## PART 0 — The one-sentence scope (your flag)
@@ -83,13 +81,13 @@ Endpoint → Wazuh Agent →  │                  (rule hits)                  
 **LLM (alert explanation)**
 - *Job:* rewrite a flagged alert in plain English for the analyst. **It does NOT detect anything — it's a translator/label-printer.**
 - Make it **on-demand** (fires when analyst clicks "explain"), not always-on → saves enormous compute.
-- The genuinely GPU-hungry bit + your AMD 8GB card is bad at it → use a **tiny quantized model or a hosted API**. Least essential part; don't stress it.
+- The genuinely GPU-hungry bit. **Update (Sep 2026): the H100 80GB provided by SIAM AI runs a real local model** — a 70B fits in VRAM, or a 20–30B comfortably alongside everything else. No longer forced to a tiny quantized model or hosted API. Still the least essential part; make it on-demand, don't let it eat the schedule.
 
 **OpenSearch (= Wazuh Indexer)**
 - *Job:* store + search + analyze events fast. It's a search engine, not a normal DB — built for logs.
 - **It IS OpenSearch — "Wazuh Indexer" is just Wazuh's rebrand of it.** That's why you hadn't heard the name; it was hidden behind "indexer."
 - Central store where **everything converges**: rule alerts land here, AI findings get written back here, dashboard reads from here. Necessary — no OpenSearch = nowhere to store, nothing to display.
-- **Cap its heap for testing** (`-Xms1g -Xmx1g`) — it grabs a lot by default.
+- **Cap its heap for testing** (`-Xms1g -Xmx1g`) — it grabs a lot by default. (Only needed on the 10–12GB local VM; on the provided 224GB VM this cap is optional, though still fine to keep.)
 
 **Dashboard**
 - *Job:* display alerts, let analyst act.
@@ -119,7 +117,7 @@ Endpoint → Wazuh Agent →  │                  (rule hits)                  
 
 5. **Triton as stage vs service** — fix in the architecture diagram.
 
-6. **Hardware claims are guesses** — the doc's RTX 5070 etc. are placeholders. Your real constraint: **AMD RX 5700 XT (can't run Morpheus/CUDA at all) + 16GB RAM.** Reframe: pipeline + ML run locally (CPU); Morpheus is a *documented deployment target* you design toward, validated in an equivalent CPU implementation. This is honest and fine at your stakes.
+6. **Hardware — RESOLVED (Sep 2026).** This item was originally: *the doc's RTX 5070 etc. are placeholders; the real constraint is AMD RX 5700 XT (no CUDA) + 16GB RAM, so pipeline + ML run on CPU and Morpheus is a documented-but-undeployed target.* **That constraint no longer holds.** SIAM AI Cloud provisioned (2 Sep – 30 Nov 2026): an Ubuntu 24.04 VM with **14 vCPU / 224GB RAM / 3.4TB disk / 1× NVIDIA H100 80GB (passthrough) / 1× BlueField-3 DPU (passthrough)**, over VPN+SSH. Consequences: Morpheus is now *deployed*, not merely designed toward; the local LLM runs for real; CPU-only was a constraint, not a design preference, and is now lifted. The CPU implementation remains valid as the *proof-of-method* baseline and as the fallback if the GPU work runs short — keep it in the writeup as an equivalence result, not as the only option. **Caveat:** the H100 and BlueField are shared with another group on the same VM — coordinate, and don't assume exclusive GPU access. The window closes 30 Nov, so hardware-bound work is now the deadline-critical path (see Part 4).
 
 **Things the doc does RIGHT (keep):**
 - `logall_json` → archive → Filebeat (correct source for catching what rules miss).
@@ -169,13 +167,21 @@ Standard SAD assumes a database CRUD app; yours is a pipeline, so fit varies. Ru
 ## PART 4 — What to do first (the actual order)
 
 ### Hardware reality
-- **Environment: Ubuntu VM on VMware Workstation Pro 25.2H** (Windows host). Not bare metal, not WSL2. Everything runs inside this VM.
-- **VM specs (decided):** 4 cores / **10-12GB RAM** / **80-100GB storage, dynamically allocated** (costs nothing until used; Docker images + growing archives.json + datasets eat 40GB fast).
-- **Host:** 16GB RAM total, RX 5700 XT (AMD). Host keeps ~4-6GB for itself + hypervisor; close browser tabs if it struggles, or drop VM to 10GB.
-- **RX 5700 XT (AMD):** cannot run Morpheus/CUDA — *any* AMD card can't, it's not about power. Irrelevant anyway: the pipeline is CPU/RAM work, the ML runs on CPU for small data. (GPU passthrough to the VM: don't bother — nothing in the VM needs it.)
-- **RAM inside the VM is the real constraint.** All-at-once = too tight. **Component-by-component = fine** (and better methodology, which you already chose). Pair up only for handoff tests (2 components at a time fits).
-- RAM savers: cap OpenSearch heap (`-Xms1g -Xmx1g`), Kafka in KRaft (no Zookeeper), Docker per-container limits, **keep the LLM off this box** (tiny model or API).
-- **Snapshot discipline (the VM superpower):** take a snapshot right after Ubuntu + Docker install, *before* touching Wazuh. Broken install → one-click rollback instead of OS reinstall. Snapshot again at each working milestone (Wazuh up, pipeline wired). This is the single best undo button available — use it.
+
+**Two environments now — keep them straight.**
+
+**A) Local dev VM (unchanged, still useful).** Ubuntu on VMware Workstation Pro (Windows host), 4 cores / 10–12GB RAM / 80–100GB dynamic disk. This is where the project was built through Steps 1–3. Keep it as the offline dev box and the fallback if the VPN to SIAM AI is flaky. On *this* box the old RAM discipline still applies: component-by-component, cap OpenSearch heap (`-Xms1g -Xmx1g`), Kafka in KRaft, keep the LLM off it. RAM is the binding constraint here.
+
+**B) Provided SIAM AI VM (Sep 2–Nov 30, 2026 — the deployment target).** Ubuntu 24.04, **14 vCPU / 224GB RAM / 3.4TB disk / 1× H100 80GB (passthrough) / 1× BlueField-3 DPU (passthrough)**, reached over VPN+SSH. This is where Morpheus, the real LLM, and the DPU network lane run. Notes:
+  - **RAM is no longer the constraint here** — run everything at once if you want. The heap-cap and sequential-startup rules are local-VM survival tactics, not needed on this box.
+  - **The H100 unblocks Morpheus and the local LLM.** Both move from "designed toward" to "deployed."
+  - **The BlueField-3 is the network-lane sensor** (Suricata on the DPU → flows into Kafka). See Part 2 / Phase 2.
+  - **Shared with another group on the same VM.** Isolate your work in Docker containers; pick a port range and tell the other group; never point attacks at anything outside your own containers; the H100 and DPU are shared, so coordinate and don't assume exclusive access.
+  - **Egress may be locked down** — test `curl github.com` early; if blocked, `scp` datasets/models over the VPN.
+  - **Back up continuously** (git push; the consent form puts data loss on you) and **the VM disappears 30 Nov** — anything that exists only there is gone then.
+  - **Long jobs in `tmux`/`screen`** — a VPN drop kills a bare SSH session and whatever ran inside it.
+
+- **Snapshot discipline (local VM):** snapshot after Ubuntu+Docker install and at each working milestone. One-click rollback beats reinstalling. (On the provided VM you may not have snapshot control — git + external backups are the equivalent there.)
 
 ### The sequence
 
@@ -208,8 +214,22 @@ Now connect the seams you've been assuming work: Filebeat→Kafka, Kafka→consu
 **Step 8 — SAD diagrams alongside/after.**
 Context diagram whenever. **State diagram after Step 3** (real alerts = accurate lifecycle). These document what you built → building-informs-diagrams is the right order. Not first — you've already clarified scope by talking it through.
 
-**Step 9 — Optional polish.**
-One real Morpheus run on free Colab *if* you want genuine "it runs in Morpheus" evidence + throughput numbers. Optional, not required. LLM explanation via tiny model/API. Prettify dashboard.
+**Step 9 — Migrate to the SIAM AI VM + deploy the hardware-bound work.** *(Now committed, not optional. This is the deadline-critical path — the VM expires 30 Nov.)*
+Order matters because only this work depends on hardware that goes away:
+- **9a — Get on and verify (week 1).** VPN up, SSH in, `nvidia-smi` (H100 visible, 80GB), `ls /dev/rshim*` + `lspci | grep -i blue` (DPU present, what mode), confirm Docker + NVIDIA Container Toolkit, test egress. Change the Wazuh password before bringing the stack up (shared box). Raise anything wrong in week 1 while they're still in handover mode.
+- **9b — Migrate the core stack** and get it running end-to-end exactly as it does locally, on real hardware. Boring, load-bearing.
+- **9c — Morpheus on the H100.** Real run, real throughput numbers. The design already matches DFP's Kafka-native shape (Part 6), so this is deployment, not redesign.
+- **9d — Local LLM alert explanation** served on the H100 (vLLM + a 20–70B model), on-demand.
+
+**Step 10 — Phase 2: the DPU network lane (committed).**
+Second sensor, second coherent data slice — network flows alongside the auth lane. This is the cross-layer "X" in XDR and the part the sponsor most wants to see (DPU acceleration is named in their use-list).
+- Suricata on the BlueField's Arm side, watching container-to-container traffic, emitting EVE JSON.
+- EVE JSON → the same Kafka; a **separate** consumer + **separate** model (network features never mixed with auth features — see the coherent-slice rule).
+- Detections tagged distinctly, surfaced on the same dashboard next to the auth lane.
+- **Gate (not a cancel, a sequence):** land 9a–9d — the scoped auth-lane system, complete and defensible — *before* starting Step 10. If the core is solid with runway left, Phase 2 is the standout chapter. If time runs short, it degrades gracefully to a documented, part-built future-work item with real justification. Either way the degree-critical work is done first.
+
+**Step 11 — Benchmarks, writeup, handover.**
+Throughput/latency/GPU-utilization numbers, the rule-only vs rule+AI comparison, and the two deliverables: the academic report (grades *you* — failures included) and the sponsor handover (repo + knowledge presentation; leads with what their hardware achieved). Consent form clause 5 requires the handover — pin the date with your advisor/SIAM contact early, it's likely late Nov.
 
 ### Throughout: the failure log
 Log every setup, every error, every dead end — *as it happens, ugly and real-time.* Paste actual error text + "thought X would work because…" + your guess at why it broke. This converts failure into content: it feeds บทที่ 5 (lessons learned), and it means **you can't fail to pass** — a rigorous account of real attempts, including where reality pushed back, is itself the deliverable. You already do this in pentest reports; same move, new domain.
@@ -218,7 +238,7 @@ Log every setup, every error, every dead end — *as it happens, ugly and real-t
 
 ## PART 5 — How to actually test the AI model (with your hardware limit)
 
-This is the part that was thin before. Your constraint (16GB RAM, AMD GPU, no cloud) and the *correct* ML approach point to the **same answer**, which is lucky: test small, coherent datasets one at a time. Here's the whole thing.
+This is the part that was thin before. The **correct** ML approach — test small, coherent datasets one at a time, offline — happens to be independent of hardware, so it held true on the old 16GB/AMD local box and still holds on the H100 VM. It was never really a compromise forced by hardware; it's just right. (Having the H100 now means the *live* pipeline and Morpheus can run for real — but the offline model-proof below stays a separate, CPU-fine, self-contained experiment. Don't conflate the two.) Here's the whole thing.
 
 ### The core idea: the model test is SEPARATE and OFFLINE
 Testing the model is **not** part of the live pipeline. You don't need Kafka running, you don't need Wazuh running, you don't need anything else up. It's just: *a dataset file + a Python script + your CPU.* This is why it's small and manageable — it's isolated from all the infrastructure. You're proving one thing: "given normal data, the model learns normal; given weird data, it flags it."
@@ -246,7 +266,7 @@ Your instinct to test each small dataset separately isn't just a hardware workar
 
 Each run is small, self-contained, uses your full RAM alone, needs no GPU, and finishes in minutes. You can do login-anomaly on auth data as one experiment, network-anomaly on CICIDS as another — *separate models, separate runs, separate writeups.* That's clean, not a compromise.
 
-### Keeping it light on 16GB / AMD / CPU
+### Keeping the offline model-test light (still good practice, even with the H100)
 - **Subsample big datasets** — CICIDS is huge; load 10-50k rows, not millions. Anomaly detection demonstrates fine on a subset.
 - **Isolation Forest first** — it's lighter and simpler than an autoencoder, pure scikit-learn, trains in seconds. Prove the concept with it before bothering with the autoencoder.
 - **Autoencoder on CPU** — PyTorch CPU mode is fine for small data. Skip GPU entirely; don't fight ROCm on the 5700 XT.
@@ -273,7 +293,7 @@ The offline-tested model is the *same logic* that (later, optionally) goes into 
 - **HUGE validation of your architecture: the official DFP streaming pipeline reads from Kafka natively** (`ControlMessageKafkaSourceStage`). Your Wazuh → Kafka → Morpheus design is literally the shape NVIDIA's own reference pipeline expects. You're not improvising the integration — you're matching the intended pattern.
 - The reference DFP example ingests **Azure AD / Duo authentication logs** — i.e., auth/login data, matching your data-slice choice.
 - NVIDIA's own docs: "Any data source can be fed into DFP after some preprocessing to get a feature vector per log/data point" — official support for the "general method, coherent feature vector per experiment" framing.
-- Reality check from NVIDIA's own forums: people report the DFP production example is **hard to get running** with sparse documentation. Reinforces the strategy: prove the ML concept in plain Python first; treat real-Morpheus as optional Colab polish.
+- Reality check from NVIDIA's own forums: people report the DFP production example is **hard to get running** with sparse documentation. Strategy holds: prove the ML concept in plain Python on CPU first (done — see failure log), *then* deploy on the provided H100. Budget real time for the Morpheus setup fight — the docs are sparse, so treat 9c as a multi-day task, not an afternoon.
 
 ### Modern EDR/XDR landscape — pros/cons with current (2025–2026) numbers for Chapter 2
 
@@ -303,7 +323,7 @@ What the industry is doing about it (validates your design):
 2. **It's all JSON** once it leaves Wazuh — the plumbing is content-agnostic, don't overthink data types for the pipes.
 3. **Generality is in the METHOD, not the data-juggling** — one model on one coherent data slice per experiment. Don't mix logins + network + files into one model (feature soup = broken). Many *related* features = fine; many *unrelated* types mashed together = the real "too many features" problem.
 4. **archives.json, NOT alerts.json** for the AI. The one technical thing that must be right.
-5. **Morpheus is just a fast wrapper over ML** — prove the ML on CPU; Morpheus is a deployment target, not a mandatory local component.
+5. **Morpheus is just a fast wrapper over ML** — prove the ML on CPU first; then (Sep 2026) *deploy* it on the provided H100. It's now a real deployed component, not only a documented target — but the CPU proof still stands alone as Claim B if the deployment runs short.
 6. **70% is easy assembly, 30% is iterative craft** — don't dread the plumbing as if it's hard; only the model-tuning is slow, and it's small + isolated.
 7. **"Good" = works + understood + honestly explained** — reachable, rewards your honesty instinct, not asymptotic perfection.
 8. **The next step is a terminal, not more planning** — you're past the point where more understanding helps. Download the Ubuntu ISO.

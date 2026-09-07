@@ -24,14 +24,19 @@ SETUP (state in the report):
     data.url. This consumer falls back to parsing full_log if those are absent.
 """
 
-import json, re, signal, sys, time
+import json, os, re, signal, sys, time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from sklearn.ensemble import IsolationForest
 from opensearchpy import OpenSearch, helpers
+
+# one credential source for the whole project: dashboard/.env (git-ignored)
+load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
 
 # ----------------------------------------------------------------- config
 TOPIC          = "wazuh-archives"
@@ -64,8 +69,9 @@ consumer = KafkaConsumer(
 )
 
 os_client = OpenSearch(
-    hosts=[{"host": "localhost", "port": 9200}],
-    http_auth=("admin", "SecretPassword"),
+    hosts=[{"host": os.environ.get("OS_HOST", "localhost"),
+            "port": int(os.environ.get("OS_PORT", "9200"))}],
+    http_auth=(os.environ.get("OS_USER", "admin"), os.environ.get("OS_PASS", "")),
     use_ssl=True, verify_certs=False, ssl_show_warn=False,
 )
 
