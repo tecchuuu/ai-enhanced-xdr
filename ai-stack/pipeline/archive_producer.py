@@ -16,12 +16,21 @@ import signal
 import subprocess
 import sys
 import time
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 
+from dotenv import load_dotenv
 from kafka import KafkaProducer
 
+# same config source as the rest of the project
+load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
+
 TOPIC = "wazuh-archives"
-CONTAINER = "single-node-wazuh.manager-1"
+# Which Wazuh manager container to tail. On a SHARED Docker host, set WAZUH_CONTAINER
+# in dashboard/.env to YOUR project-prefixed name (e.g. LuckyFive_wazuh-wazuh.manager-1)
+# so this can only ever tail your own manager, never another group's.
+CONTAINER = os.environ.get("WAZUH_CONTAINER", "single-node-wazuh.manager-1")
 
 producer = KafkaProducer(
     bootstrap_servers="localhost:9092",
