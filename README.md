@@ -4,7 +4,7 @@ Wazuh + Kafka + anomaly detection pipeline that catches attacks signature-based 
 
 Built for **CS497 Computer Science Project I**, sponsored by SIAM AI Cloud. Endpoint events flow through Wazuh, stream through Apache Kafka, and are analysed by an unsupervised anomaly-detection model (Isolation Forest) that flags behavioural deviations — including slow, paced attacks that rule-based correlation does not catch. Detections are written back to OpenSearch, tagged separately from rule alerts, and shown side by side on a custom dashboard.
 
-NVIDIA Morpheus is the documented GPU deployment target; this implementation runs on CPU as a proof of concept (see `docs/` for the full architecture writeup and the reasoning behind that decision).
+The CPU implementation (Isolation Forest) is the proof of method; NVIDIA Morpheus on GPU is the deployment target. SIAM AI Cloud has provisioned an H100 80GB + BlueField-3 DPU VM (Sep–Nov 2026), so that deployment — plus a local LLM explainer and a DPU network lane — is now an active next phase rather than hardware-blocked (see `docs/` and `SETUP.md`).
 
 ## Architecture
 
@@ -104,7 +104,7 @@ Full reasoning is in `docs/`: `project_plan.md` (original architecture plan),
 `failure_log.md` (every error, dead end, and decision with rationale),
 `results_log.md` (claims, metrics, and evidence), `ROADMAP.md` (what's next and
 how the deferred pieces attach), `dashboard-build-notes.md` (console additions
-and their contracts).
+and their contracts). Deploying on the SIAM VM: `SETUP.md`.
 
 **Test traffic:** attack scenarios were generated with local scripts (not
 committed) — any SSH brute-force source works to reproduce, e.g. repeated
@@ -115,10 +115,10 @@ Attack from a *different* machine so the source IP is real and blockable.
 
 Core detection pipeline (ingestion → streaming → anomaly detection → writeback → dashboard) is working and validated against controlled attack scenarios with independent ground truth. Detections are enriched with heuristic threat categories (MITRE ATT&CK-mapped) and per-window source IPs, severity scales with anomaly score, and manual response (IP block via Wazuh Active Response, with audit log) works end to end from the console.
 
-Deferred pending hardware: GPU deployment on NVIDIA Morpheus (current GPU is AMD; the pipeline mirrors Morpheus's stage layout so the port is a swap, not a rewrite) and local-LLM alert explanation (insufficient RAM; the explainer consumes the same detection documents, so it attaches without pipeline changes). The anomaly model itself is swappable — Isolation Forest is the current occupant of the inference stage, not a design commitment.
+Next phase (hardware now provisioned): SIAM AI Cloud supplied an H100 80GB + BlueField-3 DPU VM (Sep–Nov 2026), lifting the earlier CPU-only/AMD/low-RAM constraints. Morpheus on GPU is a swap of the inference slot (the pipeline mirrors its stage layout, so it's a port not a rewrite); the LLM explainer is already built (`dashboard/explainer.py`, mock/Ollama/Anthropic, running mock until a model is wired); and the BlueField DPU enables a second network-detection lane. The anomaly model itself is swappable — Isolation Forest is the current occupant of the inference stage, not a design commitment.
 
 ## Limitations
 
 - **Detection plane is co-located with the monitored host** for the proof of concept. Detection itself is unaffected, but log tamper-resistance is not: a root-level compromise of the VM can destroy local evidence before it is acted on. A production deployment isolates the Wazuh manager / Kafka / OpenSearch onto a separate host; the pipeline design (Kafka between capture and model) is what makes that split a configuration change rather than a rewrite.
 - **Response is manual by default.** Anomaly detection carries false positives, so AI detections are routed to a human rather than auto-blocked. Automatic response (Wazuh Active Response `firewall-drop`) is appropriate only for the highest-confidence tier. Unblocking is best-effort — Wazuh exposes no first-class API undo (see `docs/dashboard-build-notes.md`).
-- **Single anomaly domain.** The detector covers authentication events only. Network / web / host detectors are designed (`docs/ROADMAP.md`) but not built.
+- **Single anomaly domain (live).** The evaluated detector covers authentication events only. A web detector is written (`ai-stack/pipeline/web_detection_consumer.py`, rule 100002) but not yet run against a live stack; network / host detectors are designed (`docs/ROADMAP.md`) but not built.
