@@ -311,7 +311,18 @@ All three were caught before the run mattered, but each would have silently degr
 
 ---
 
-## BUILD STATUS (last updated: 2026-09-07 — bridged network + docs refresh)
+## PHASE: Web detection lane (2026-09-09)
+
+### Entry 22 — Web detector brought online; auth/web lane-leak found and fixed
+- **Brought the web lane online.** Apache on :80 → agent `<localfile>` on `/var/log/apache2/access.log` → manager → archive → Kafka → `web_detection_consumer.py` (rule 100002, pipeline `web-streaming`). Validated live against an off-host attacker (Kali via KVM NAT, real srcip `192.168.1.133`):
+  - **Content-discovery scan** (gobuster, ~3152 requests): flagged `score −0.85, request_count 3152, distinct_urls 3152, error_ratio 0.999` — the model collapsed a 3000+ request scan into **one** detection.
+  - **Path-traversal** curls (07:34): correctly categorised `path_traversal` / T1083.
+- **Finding — the two lanes leaked into each other (silently wrong, thesis-relevant).** `detection_consumer.py` kept any event carrying `data.srcip`, on the comment's assumption that "only authentication-relevant events carry srcip." That is false — Apache access events carry `srcip` too. So the web scan was **also ingested by the auth detector** and flagged as `brute_force` (rule 100001, 3152 events, same window). This silently violated the coherent-slice separation the project's design depends on, and was invisible until web traffic actually ran through — the same failure shape as Entry 9 (`distinct_users=0`): a filter that *reads* as correct but is quietly wrong.
+  - **Fix:** the auth ingest now skips events that carry `data.url` (i.e. web access events): `if "srcip" not in data or "url" in data: return`. The web consumer already keys on `data.url`, so the lanes are now cleanly disjoint.
+- **Secondary — categorisation mis-priority.** `categorize()` tested the injection regex before the aggregate scan shape, so the content-discovery scan (whose wordlist happened to contain an injection-like path) was labelled `web_injection` instead of `content_discovery`. The *detection* was correct; only the label was wrong. Reordered to classify by dominant aggregate behaviour (content_discovery / vulnerability_scan / brute_force) **before** the payload-pattern flags (injection / traversal), which are for low-volume targeted requests.
+- **Lesson for บทที่ 5:** a data filter or label that reads as correct within one data domain can be silently wrong across domains; only running the *other* domain's traffic through the shared pipeline exposed it. Reinforces the project's central point — invisible-to-inspection failures surface only under test.
+
+## BUILD STATUS (last updated: 2026-09-09 — web detection lane online)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
   - Mock: Isolation Forest caught 5/5 planted anomalies, ~1% FPR, CPU. Claim B on controlled labelled data.
@@ -323,7 +334,7 @@ All three were caught before the run mattered, but each would have silently degr
 - **KNOWN DATA LIMITATIONS (state in บทที่ 5):** single-host lab data, one source IP (127.0.0.1 — `srcip` unusable as a feature), single monitored endpoint, episode-3 detections are weak-signal, host suspension created a ~3 h baseline gap.
 - **REMAINING WORK:**
   1. **Fresh traffic run from a second host** — bridged networking is now in place; attack from the host machine over the LAN. This single run unblocks three things at once: real `srcip` values (loopback is refused by the block-ip guardrail, so Block IP is currently undemonstrable), the first AI detections carrying `category`/`top_srcips`, and a non-empty console. See the enrichment note above.
-  2. **Web detector on Apache :80** — roadmap item #1, the `web` row (4xx ratio, URL diversity). Chosen over further auth-domain work because simple brute force is precisely what the ruleset already catches; the AI side needs an evasive web variant to have anything to add. Clone `detection_consumer.py` with the HTTP feature set; the dashboard and backend need no changes.
+  2. **Web detector on Apache :80 — DONE (2026-09-09).** Online and validated: a content-discovery scan from a real off-host IP was collapsed to one detection (rule 100002); path traversal also caught. See Entry 22 (includes the auth/web lane-leak fix).
   3. **Write up บทที่ 4 and 5** from `results_log.md` and this file. Raw material is complete; the prose is not written. SAD source for บทที่ 3 is now done (`sad_diagrams_chapter3.md`).
   4. **Local LLM alert explanation** — now deployable on the provided H100 (vLLM + a 20–70B model), on-demand. SIAM goal #3.
   5. **Autoencoder** — model step-up, comparison against Isolation Forest.

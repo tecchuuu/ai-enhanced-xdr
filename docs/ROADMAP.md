@@ -11,7 +11,7 @@ events_per_user / hour). To cover a new attack type, clone
 | Detector | Feed | Features | Catches | Status |
 |---|---|---|---|---|
 | auth | sshd/PAM | events/user, distinct users | brute force, spraying | exists, evaluated |
-| web | nginx/apache access logs | request rate, URL diversity, 4xx ratio, POST ratio | fuzzing, injection, login brute force | `web_detection_consumer.py` written, **not yet run** against a live stack |
+| web | nginx/apache access logs | request rate, URL diversity, 4xx ratio, POST ratio | fuzzing, injection, login brute force | online + validated 2026-09-09 (R11): content discovery + path traversal caught, real off-host IP |
 | network | conn/firewall logs | distinct dst ports, conn rate/src | port scans, sweeps | not started |
 | host | FIM/syscheck (already running) | file changes/min, new bins, sudo | persistence, priv-esc | not started |
 

@@ -224,11 +224,36 @@ Features: hour-of-day, source IP octet, failed-attempt count. Planted anomalies 
 
 ---
 
+## R11 — Web detection lane: content discovery + path traversal (real off-host IP)
+
+**Measured:** whether the same anomaly method, given a web feature view, detects web attacks the ruleset buries in noise — and whether detections carry a real, blockable source IP.
+
+**Setup:** Apache on :80, access log fed to Wazuh via `<localfile>`, `web_detection_consumer.py` (rule 100002, `web-streaming`) running alongside the auth consumer on its own Kafka consumer group. Light "normal" traffic ran as a baseline. Attacker: off-host (Kali, real srcip `192.168.1.133`). Ground truth (UTC, 2026-09-09): content-discovery scan at **07:32**, path-traversal requests at **07:34**.
+
+**Result:**
+
+| Window | Attack | Detector output |
+|---|---|---|
+| 07:32 | gobuster content discovery (~3152 requests) | rule 100002, score **−0.85**, `request_count 3152, distinct_urls 3152, error_ratio 0.999`, srcip 192.168.1.133 → one detection |
+| 07:34 | path-traversal curls | rule 100002, `category path_traversal` (T1083), srcip 192.168.1.133 |
+
+**Alert reduction (the headline):** the single content-discovery scan produced **~3000+ rule alerts** (one per 404'd request — the Alert-Fatigue problem, §2.1.5) but **one** AI detection. This is a sharper version of R8's 384→5: **~3000 rule alerts → 1 prioritised detection**.
+
+**Real source IP:** unlike R1–R10 (all `127.0.0.1`), these detections carry a real off-host IP (`192.168.1.133`), which partially addresses Known-limitation 1 and makes automated Block-IP demonstrable.
+
+**Honest notes (from failure log Entry 22):**
+- The scan window was initially mis-labelled `web_injection` rather than `content_discovery` — a heuristic ordering bug (payload regex checked before aggregate scan shape), since fixed. The *detection* was always correct; only the category label was.
+- The scan also leaked into the auth detector (rule 100001, counted as brute_force) because the auth consumer kept any event carrying `srcip`, which web events also have. Fixed so the lanes are disjoint. Both are recorded as findings, not hidden — they demonstrate the "silently-wrong, invisible until tested" theme.
+
+**How to state it:** "The same unsupervised method, given a web-request feature view, detected a content-discovery scan and a path-traversal attempt from an external host. A single scan generated over three thousand rule alerts but one prioritised AI detection, reproducing the alert-prioritisation result of R8 at larger scale. Bringing the second lane online also surfaced — and the project corrected — a data-domain leak between the auth and web detectors, itself an instance of the silently-invisible failure mode the project studies."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
 
-1. **Single source IP.** All generated traffic originated from `127.0.0.1`, so `srcip` is constant and unusable as a feature. Multi-source validation is future work.
+1. **Single source IP (auth evaluation).** All *overnight-run* traffic originated from `127.0.0.1`, so `srcip` was constant and unusable as a feature there. Partially addressed on 2026-09-09: the web-lane run (R11) used a real off-host attacker (`192.168.1.133`); full multi-source validation remains future work.
 2. **No successful-login baseline.** Generated "normal" traffic used incorrect credentials, so all captured events are failures. A genuine normal baseline of successful logins would improve the model's notion of normal.
 3. **Short observation window.** Approximately 27 minutes of events (91 records). At 5-minute aggregation this yields only ~6 windows, below the sample size at which Isolation Forest output is statistically meaningful. The 05:24 false positive is a direct consequence.
 4. **Single host.** One monitored endpoint; no multi-agent or multi-user behavioural variation.
@@ -246,3 +271,4 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | Response time / MTTR measurement | not started | automated response playbook |
 | LLM alert-explanation quality assessment | not started | Local LLM integration |
 | Autoencoder comparison vs Isolation Forest | not started | model step-up |
+| Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |

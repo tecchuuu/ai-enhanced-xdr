@@ -15,7 +15,7 @@ nohup "$VENV/python" -u detection_consumer.py > "$LOGS/consumer.log" 2>&1 &
 
 # web detector — enable once nginx access logs are fed to Wazuh (see the module
 # docstring). Runs alongside the auth consumer on its own Kafka consumer group.
-# nohup "$VENV/python" -u web_detection_consumer.py > "$LOGS/web_consumer.log" 2>&1 &
+nohup "$VENV/python" -u web_detection_consumer.py > "$LOGS/web_consumer.log" 2>&1 &
 
 sleep 2
 echo "started:"; jobs -l

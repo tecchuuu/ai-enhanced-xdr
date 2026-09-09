@@ -90,8 +90,9 @@ def ingest(event):
         return
 
     data = event.get("data", {})
-    # only authentication-relevant events carry srcip; skip the rest
-    if "srcip" not in data:
+    # auth events carry srcip; web access events carry srcip AND url. Exclude the
+    # latter so the web lane does not leak into the auth model (see failure log).
+    if "srcip" not in data or "url" in data:
         return
 
     key = int(dt.timestamp()) // WINDOW_SEC

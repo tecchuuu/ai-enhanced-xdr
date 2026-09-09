@@ -178,16 +178,19 @@ def categorize(r):
     The model only says "this window deviates from baseline"; these labels turn
     that into something an analyst can triage. Pattern -> (category, MITRE, label).
     """
+    # Aggregate scan shapes first: a high-volume scan can incidentally contain a
+    # payload-like path, so classify by dominant behaviour before payload flags.
+    if r.not_found_count >= 10 and r.distinct_urls >= 10:
+        return "content_discovery", "T1595.003", "many 404s across many paths"
+    if r.error_ratio >= 0.5 and r.distinct_urls >= 8:
+        return "vulnerability_scan", "T1595.002", "high error rate across many paths"
+    if r.post_ratio >= 0.6 and r.distinct_urls <= 3 and r.request_count >= 10:
+        return "web_brute_force", "T1110", "repeated POSTs to few endpoints"
+    # Targeted payload patterns (typically low-volume, specific request).
     if r.injection:
         return "web_injection", "T1190", "injection pattern in requests"
     if r.traversal:
         return "path_traversal", "T1083", "directory-traversal pattern"
-    if r.not_found_count >= 10 and r.distinct_urls >= 10:
-        return "content_discovery", "T1595.003", "many 404s across many paths"
-    if r.post_ratio >= 0.6 and r.distinct_urls <= 3 and r.request_count >= 10:
-        return "web_brute_force", "T1110", "repeated POSTs to few endpoints"
-    if r.error_ratio >= 0.5 and r.distinct_urls >= 8:
-        return "vulnerability_scan", "T1595.002", "high error rate across many paths"
     return "unclassified_anomaly", None, "unclassified deviation"
 
 
