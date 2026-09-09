@@ -322,7 +322,38 @@ All three were caught before the run mattered, but each would have silently degr
 - **Secondary — categorisation mis-priority.** `categorize()` tested the injection regex before the aggregate scan shape, so the content-discovery scan (whose wordlist happened to contain an injection-like path) was labelled `web_injection` instead of `content_discovery`. The *detection* was correct; only the label was wrong. Reordered to classify by dominant aggregate behaviour (content_discovery / vulnerability_scan / brute_force) **before** the payload-pattern flags (injection / traversal), which are for low-volume targeted requests.
 - **Lesson for บทที่ 5:** a data filter or label that reads as correct within one data domain can be silently wrong across domains; only running the *other* domain's traffic through the shared pipeline exposed it. Reinforces the project's central point — invisible-to-inspection failures surface only under test.
 
-## BUILD STATUS (last updated: 2026-09-09 — web detection lane online)
+## PHASE: Deployment on the SIAM H100 VM (2026-09-09)
+
+Bringing the stack up on the sponsor's Ubuntu 24.04 H100 box surfaced a series of
+environment gotchas — none in our code, all in the deployment substrate. Recorded
+because "deploy the same containers on real hardware" is rarely as clean as it sounds.
+
+### Entry 23 — Docker filled a 10 GB `/var` while 3.3 TB sat idle on `/`
+- Image pulls failed with `no space left on device` despite `df /` showing 3.2 TB free. The enterprise image put `/var` on its own 9.8 GB LV, and Docker stores under `/var/lib/docker`.
+- Moving Docker's `data-root` to `/docker` (on `/`) was **not enough** — Docker 29 uses the **containerd image store** at `/var/lib/containerd`, a separate dir still on `/var` (tell: `Storage Driver: overlayfs`).
+- **Fix:** `data-root=/docker` **and** `features.containerd-snapshotter=false` in `/etc/docker/daemon.json` (reverting to the `overlay2` graphdriver under the big volume), wipe the stale `/var/lib/containerd`, restart. Merged the keys into the existing daemon.json so the nvidia runtime survived.
+- **Lesson:** check where *both* Docker and containerd store data; a separate small `/var` is a common enterprise-image trap.
+
+### Entry 24 — Cloned config files unreadable by the container (umask 0027)
+- Indexer + dashboard crash-looped: `AccessDeniedException: /usr/share/wazuh-indexer/config/opensearch.yml`. The repo was cloned under `umask 0027`, so config files were mode `-rw-r-----` — the container's UID 1000 (neither owner nor group) couldn't read them.
+- **Fix:** `chmod -R a+rX config/`.
+- **Lesson:** bind-mounted config from a fresh clone must be readable by the container's UID; a restrictive umask silently breaks it.
+
+### Entry 25 — requirements.txt was incomplete (worked locally, failed on a clean clone)
+- Every pipeline/API process exited on `ModuleNotFoundError: dotenv`, then `httpx`. Both had been `pip install`ed ad-hoc in the local venv and were never added to `requirements.txt`, so a fresh clone lacked them.
+- **Fix:** added `python-dotenv` and `httpx` to `requirements.txt` (torch stays a separate optional install).
+- **Lesson:** a requirements file is only trustworthy if a clean-clone install has been tested; ad-hoc `pip install`s in a working venv hide the gap.
+
+### Entry 26 — Password change silently broke alert shipping (AI path masked it)
+- After changing the indexer admin password, the dashboard showed no new alerts and `wazuh-alerts-*` stayed frozen at 186 — yet the AI pipeline kept flagging events normally.
+- **Cause:** the password was updated on the indexer (internal_users + securityadmin) but **not** in the manager's `INDEXER_PASSWORD` env, so the manager's **Filebeat could no longer authenticate** to ship alerts. The AI path was unaffected because it reads the **archive**, not the index — so alerting broke invisibly while detection appeared healthy.
+- **Fix:** update `INDEXER_PASSWORD` in both compose services and recreate manager + dashboard; Filebeat re-authenticated and backfilled (186 → 493, the `rule 5710` alerts appeared).
+- **Lesson (บทที่ 5):** an OpenSearch password rotation must update *every* client credential (Filebeat, dashboard), or alerting fails silently. This is a live instance of the project's own thesis — a failure invisible to the surface (dashboard looked "quiet", AI looked fine) and only caught by querying the index directly.
+
+### Note — GPU compute blocked on the SIAM VM (see memory: siam-gpu-fabric-blocker)
+- `nvidia-smi` and `--gpus all` containers see the H100, but CUDA won't initialise (Error 802, Fabric State "In Progress"); Fabric Manager can't run (no NVSwitch) and there's no IMEX service. Provider-side passthrough issue, ticket raised. CPU pipeline unaffected; GPU components (Morpheus, LLM, autoencoder-on-GPU) pending the fix.
+
+## BUILD STATUS (last updated: 2026-09-09 — deployed on SIAM H100 VM)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
   - Mock: Isolation Forest caught 5/5 planted anomalies, ~1% FPR, CPU. Claim B on controlled labelled data.

@@ -272,6 +272,26 @@ Both flag all 3 rule windows (05:06, 05:07, 05:30) **and** the meaningful slow-a
 
 ---
 
+## R13 — Deployment on the SIAM H100 environment (real hardware)
+
+**Measured:** whether the whole system — proven locally on CPU — actually deploys and runs end-to-end on the provided production-grade environment, and detects a real attack there.
+
+**Environment:** SIAM AI VM `oa-hgx-h100-bu-02` — Ubuntu 24.04, 14 vCPU / 220 GB RAM / 3.3 TB disk / **NVIDIA H100 80GB** / **BlueField-3 DPU**, reached over VPN+SSH. Docker + NVIDIA Container Toolkit installed; GPU confirmed visible inside containers (`docker run --gpus all ... nvidia-smi` → H100).
+
+**Result:** full stack brought up under project namespace `luckyfive_*` — Wazuh manager/indexer/dashboard (indexer cluster `green`), Kafka (KRaft), the streaming pipeline (producer + auth & web consumers) and the FastAPI backend. Admin password changed from the default. A Wazuh agent (ID 001) was deployed on the VM and reached **Active**. A real SSH invalid-user attack was then run and verified through **both** paths:
+- **AI/archive path:** producer logged the events to Kafka (`rule 5710 lvl 5` for each attempted user) → consumer windowing.
+- **Alert path:** after fixing the credential propagation (see failure log), 6 `rule 5710` alerts indexed into `wazuh-alerts-*` (total 186 → 493) and rendered in the dashboard.
+
+**Evidence:** `siam_events_5710.png` (invalid-user alerts in the dashboard), `siam_overview.png`, `siam_stack_gpu.png` (`docker ps` + `nvidia-smi` H100).
+
+**Honest notes:**
+- Source IP is loopback (`127.0.0.1`) — the attack was run on-box because the local VM has no network route to the SIAM VM. Real off-host `srcip` was already demonstrated locally (R11); this result is about proving the *deployment*, not the source IP.
+- **GPU compute is currently blocked** on the SIAM VM (CUDA Error 802, GPU Fabric State stuck — a provider-side passthrough issue, ticket raised). The CPU pipeline is unaffected; Morpheus, the local LLM, and the autoencoder-on-GPU are pending that fix.
+
+**How to state it:** "The system, developed and proven on a constrained local VM, was deployed without architectural change onto the sponsor's H100 environment: the full ingestion→streaming→detection→storage→dashboard chain ran end-to-end and detected a live attack on the production-grade box. This validates the containerised, swap-not-rewrite design. GPU-accelerated components await a provider-side GPU-initialisation fix; the CPU implementation runs in the interim."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:

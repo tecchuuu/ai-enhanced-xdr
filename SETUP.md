@@ -4,7 +4,7 @@ Overall flow. Assumes you know `git clone` + `pip install -r requirements.txt`.
 Only the non-obvious / SIAM-specific steps are spelled out.
 
 ## What's different on this box
-- **Shared Docker daemon** (2 groups per VM) → one Docker service runs both groups' containers; your *directory does not isolate you*. Name clashes are unlikely (different projects) but possible if both groups use the official `wazuh-docker` (both default to project `single-node`). Cheap insurance: prefix compose commands with `-p LuckyFive_wazuh` / `-p LuckyFive_kafka` (optional, not mandatory). **What actually matters: take turns + `compose down` when done** — host ports (:443, :9200, :8000) can only bind once on a shared VM, and `-p` does NOT fix that.
+- **Shared Docker daemon** (2 groups per VM) → one Docker service runs both groups' containers; your *directory does not isolate you*. Name clashes are unlikely (different projects) but possible if both groups use the official `wazuh-docker` (both default to project `single-node`). Cheap insurance: prefix compose commands with `-p luckyfive_wazuh` / `-p luckyfive_kafka` (optional, not mandatory). **What actually matters: take turns + `compose down` when done** — host ports (:443, :9200, :8000) can only bind once on a shared VM, and `-p` does NOT fix that.
 - **Shared hardware** → keep everything in Docker; `docker compose down` when you stop (removes containers, so nothing lingers on reboot).
 - **No Claude API key here** → the LLM explainer runs on **Ollama** (local model on the H100), not Anthropic.
 - **Secrets (`.env`) are NOT in git** → recreate on this box (step 4).
@@ -21,17 +21,17 @@ Only the non-obvious / SIAM-specific steps are spelled out.
 - Optional — the autoencoder model (`DETECTOR_MODEL=autoencoder`) needs PyTorch, kept out of `requirements.txt` so the base install stays light: `ml-venv/bin/pip install torch` (the default Linux build is CUDA-enabled → uses the H100). Isolation Forest needs no torch.
 
 ## 3. Wazuh stack
-- `cd wazuh && docker compose -p LuckyFive_wazuh up -d`  (`-p` optional; namespaces your containers)
+- `cd wazuh && docker compose -p luckyfive_wazuh up -d`  (`-p` optional; namespaces your containers)
 - Change the admin password: `hash.sh` → put hash in `internal_users.yml` → recreate indexer → `securityadmin.sh -f ... -t internalusers`. (See failure_log for the exact sequence + the bind-mount gotcha.)
 
 ## 4. .env (secrets — not in git)
     cp dashboard/.env.example dashboard/.env
 Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from step 3>`,
 `EXPLAINER_PROVIDER=ollama`, `OLLAMA_MODEL=llama3.2` (no ANTHROPIC key),
-`WAZUH_CONTAINER=LuckyFive_wazuh-wazuh.manager-1` (must match your `-p` name so the producer tails YOUR manager, never the other group's).
+`WAZUH_CONTAINER=luckyfive_wazuh-wazuh.manager-1` (must match your `-p` name so the producer tails YOUR manager, never the other group's).
 
 ## 5. Kafka + pipeline
-- `docker compose -p LuckyFive_kafka -f ai-stack/ai-stack.yml up -d`
+- `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml up -d`
 - `./ai-stack/start_all.sh`  (uvicorn + producer + consumer, via nohup)
 
 ## 6. Ollama (LLM explainer — fills report §4.8)
@@ -40,7 +40,7 @@ Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from
 - explainer picks it up via `EXPLAINER_PROVIDER=ollama`; restart the API after editing `.env`
 
 ## 7. When done
-- `docker compose -p LuckyFive_wazuh down` and `docker compose -p LuckyFive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.
+- `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.
 
 ## Later (stretch, unpredictable — budget multi-day each)
 - **Morpheus on H100** (DFP, Kafka-native source) — real throughput numbers for the report.
