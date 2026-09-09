@@ -32,6 +32,25 @@ Isolation Forest → autoencoder (Morpheus DFP's approach: learn to reconstruct
 docs out, same index schema. Nothing upstream or downstream changes — that's
 the "swap not rewrite" claim in the README; keep it true.
 
+**Implemented (2026-09-09).** The slot is now a registry: `ai-stack/pipeline/models/`
+(`isolation_forest.py`, `autoencoder.py`), one interface `fit_score(X, contamination)`,
+selected by `DETECTOR_MODEL` in `.env`. Swapping is a config change, not a code edit.
+Autoencoder built (PyTorch, device-aware CPU/GPU) and compared head-to-head with IF (results
+log R12: comparable, autoencoder slightly broader on the low-and-slow phase). **On SIAM:** Morpheus's `dfencoder` becomes a third
+registry entry occupying the same slot — the CPU autoencoder is the portable proof of the
+same method. Bigger data (below) is where the autoencoder is expected to pull ahead.
+
+## 2b. Data — SIAM can supply comparable datasets per lane
+SIAM AI offered sample/baseline logs so every group has comparable data: firewall,
+web access, Windows event, **Linux auth**, **Zeek/Suricata**, PCAP, IOC feed. Use them
+per lane, never mixed (coherent-slice rule still holds):
+- **Auth lane** → SIAM Linux auth logs (multi-host, multi-user, real IPs) directly
+  retire the single-host / single-IP / no-success-baseline limits in results-log §5.3.
+- **Network lane** → SIAM Zeek/Suricata logs are the *same EVE-JSON shape* the BlueField
+  DPU lane emits, so they fit that lane's model directly — a better match than CICIDS2017
+  (different schema). CICIDS drops to an optional external benchmark, not the plan.
+Net: less dataset-hunting, and the auth lane finally gets realistic multi-source data.
+
 ## 3. RAM arrives → LLM is a READER, not a pipeline stage
 The LLM consumes existing `ai-detections-*` docs and writes a 2-sentence analyst
 explanation back onto the doc (`ai.explanation`). The flyout displays it. It

@@ -18,6 +18,7 @@ Only the non-obvious / SIAM-specific steps are spelled out.
 ## 2. Project + venv
 - `git clone <repo> && cd ai-enhanced-xdr`
 - `python3 -m venv ml-venv && ml-venv/bin/pip install -r requirements.txt`
+- Optional — the autoencoder model (`DETECTOR_MODEL=autoencoder`) needs PyTorch, kept out of `requirements.txt` so the base install stays light: `ml-venv/bin/pip install torch` (the default Linux build is CUDA-enabled → uses the H100). Isolation Forest needs no torch.
 
 ## 3. Wazuh stack
 - `cd wazuh && docker compose -p LuckyFive_wazuh up -d`  (`-p` optional; namespaces your containers)

@@ -32,7 +32,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 from kafka import KafkaConsumer
-from sklearn.ensemble import IsolationForest
+from models import get_model
 from opensearchpy import OpenSearch, helpers
 
 # one credential source for the whole project: dashboard/.env (git-ignored)
@@ -49,6 +49,9 @@ AI_INDEX       = f"ai-detections-{datetime.now(timezone.utc):%Y.%m.%d}"
 
 FEATURES = ["request_count", "distinct_urls", "error_ratio",
             "not_found_count", "post_ratio", "requests_per_ip", "hour"]
+
+# inference-slot model, swappable via DETECTOR_MODEL in dashboard/.env
+_MODEL = get_model(os.environ.get("DETECTOR_MODEL", "isolation_forest"))
 
 # raw-line fallback: `IP - - [date] "GET /path HTTP/1.1" 404 512`
 ACCESS_RE    = re.compile(r'"(?P<method>[A-Z]+)\s+(?P<url>\S+)\s+HTTP/[\d.]+"\s+(?P<status>\d{3})')
@@ -212,10 +215,9 @@ def score_and_write():
         print(f"  [scorer] {len(df)}/{MIN_WINDOWS} windows — not enough to score yet")
         return
 
-    model = IsolationForest(contamination=CONTAMINATION, random_state=42)
     X = df[FEATURES]
-    df["flag"]  = model.fit_predict(X)
-    df["score"] = model.score_samples(X).round(4)
+    # inference slot — model chosen by DETECTOR_MODEL (see models/ registry)
+    df["flag"], df["score"] = _MODEL.fit_score(X, CONTAMINATION)
 
     hits = df[(df.flag == -1) & (~df.key.isin(already_flagged))]
     if hits.empty:
@@ -237,7 +239,7 @@ def score_and_write():
                     "description": f"AI: anomalous web traffic — {label}",
                 },
                 "ai": {
-                    "model":           "IsolationForest",
+                    "model":           _MODEL.label,
                     "pipeline":        "web-streaming",
                     "anomaly_score":   float(r.score),
                     "window":          f"{WINDOW_SEC}s",
@@ -275,7 +277,7 @@ def prune():
 
 
 # ----------------------------------------------------------------- main loop
-print(f"Consuming '{TOPIC}' (web view) -> Isolation Forest -> {AI_INDEX}")
+print(f"Consuming '{TOPIC}' (web view) -> {_MODEL.label} -> {AI_INDEX}")
 print(f"Windows: {WINDOW_SEC}s | scoring every {SCORE_EVERY}s | "
       f"min {MIN_WINDOWS} windows | Ctrl-C to stop\n")
 

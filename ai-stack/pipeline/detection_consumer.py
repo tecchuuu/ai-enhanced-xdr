@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 from kafka import KafkaConsumer
-from sklearn.ensemble import IsolationForest
+from models import get_model
 from opensearchpy import OpenSearch, helpers
 
 # ----------------------------------------------------------------- config
@@ -42,6 +42,9 @@ AI_INDEX       = f"ai-detections-{datetime.now(timezone.utc):%Y.%m.%d}"
 
 FEATURES = ["event_count", "distinct_users", "max_level",
             "hour", "events_per_user"]
+
+# inference-slot model, swappable via DETECTOR_MODEL in dashboard/.env
+_MODEL = get_model(os.environ.get("DETECTOR_MODEL", "isolation_forest"))
 
 USER_RE = re.compile(r"(?:invalid user |user )([A-Za-z0-9_.-]+)")
 
@@ -161,10 +164,9 @@ def score_and_write():
         print(f"  [scorer] {len(df)}/{MIN_WINDOWS} windows — not enough to score yet")
         return
 
-    model = IsolationForest(contamination=CONTAMINATION, random_state=42)
     X = df[FEATURES]
-    df["flag"]  = model.fit_predict(X)
-    df["score"] = model.score_samples(X).round(4)
+    # inference slot — model chosen by DETECTOR_MODEL (see models/ registry)
+    df["flag"], df["score"] = _MODEL.fit_score(X, CONTAMINATION)
 
     hits = df[(df.flag == -1) & (~df.key.isin(already_flagged))]
     if hits.empty:
@@ -186,7 +188,7 @@ def score_and_write():
                     "description": f"AI: anomalous authentication behaviour — {label}",
                 },
                 "ai": {
-                    "model":           "IsolationForest",
+                    "model":           _MODEL.label,
                     "pipeline":        "kafka-streaming",
                     "anomaly_score":   float(r.score),
                     "window":          f"{WINDOW_SEC}s",
@@ -220,7 +222,7 @@ def prune():
 
 
 # ----------------------------------------------------------------- main loop
-print(f"Consuming '{TOPIC}' -> Isolation Forest -> {AI_INDEX}")
+print(f"Consuming '{TOPIC}' -> {_MODEL.label} -> {AI_INDEX}")
 print(f"Windows: {WINDOW_SEC}s | scoring every {SCORE_EVERY}s | "
       f"min {MIN_WINDOWS} windows | Ctrl-C to stop\n")
 
