@@ -349,6 +349,43 @@ Flag-for-flag identical across both devices — same 6 windows, same agreement s
 
 ---
 
+## R16 — NVIDIA Morpheus's DFP autoencoder in the same inference slot (three-model comparison)
+
+**Measured:** whether the inference slot is genuinely model-agnostic — specifically whether NVIDIA's own production detection model can occupy it with no change to ingestion, windowing, storage or dashboard — and whether three independent methods agree about what is anomalous.
+
+**Setup:** `morpheus-core 25.06` installed in a conda environment on the SIAM VM (it links RAPIDS and the MRC C++ engine, so it cannot be pip-installed), exposing `morpheus.models.dfencoder.AutoEncoder` — the autoencoder the Morpheus Digital Fingerprinting pipeline is built around. Wrapped as one new registry file, `models/morpheus_dfencoder.py`, implementing the existing `fit_score(X, contamination) -> (flags, scores)` contract. Identical 28-window fixture, identical `contamination=0.15`, identical features for all three models.
+
+**Result:**
+
+| Model | Flagged | Agrees with rule 5712 | Device | Fit time |
+|---|---|---|---|---|
+| Isolation Forest | 5 | 3/3 | CPU (scikit-learn) | — |
+| Autoencoder (this project, PyTorch) | 6 | 3/3 | H100 | 0.755 s |
+| **Morpheus dfencoder (DFP)** | **5** | **3/3** | **H100** | **0.209 s** |
+
+Pairwise agreement:
+
+| Pair | Both | A only | B only |
+|---|---|---|---|
+| Isolation Forest vs Autoencoder | 4 | 1 | 2 |
+| **Isolation Forest vs Morpheus dfencoder** | **5** | **0** | **0** |
+| Autoencoder vs Morpheus dfencoder | 4 | 2 | 1 |
+
+**The finding.** Morpheus's dfencoder and Isolation Forest selected the *identical* set of 5 windows — total agreement, neither flagging anything the other missed. These are unrelated methods: Isolation Forest is a tree ensemble measuring isolation depth; dfencoder is a neural autoencoder measuring reconstruction error under GaussRank scaling and swap-noise training. Independent methods converging on the same windows is evidence that those windows are genuinely anomalous in the data rather than artefacts of one algorithm's inductive bias. All three models also covered all 3 rule-declared brute-force windows.
+
+**The architecture claim, now demonstrated rather than asserted.** Adding NVIDIA's model required exactly one new file in `models/` and one registry line. Zero changes to `detection_consumer.py`, `web_detection_consumer.py`, `archive_producer.py`, the writeback schema, the backend, or the dashboard. The deliberate choice was to adopt Morpheus's *model* rather than its *pipeline runtime*: the runtime would have replaced ingestion and windowing already built and evaluated here, and would have left nothing to compare against. Stated plainly in บทที่ 3 as a scoping decision — this project supplies the pipeline, Morpheus supplies one interchangeable model.
+
+**Honest notes:**
+- **Fit times are not a like-for-like benchmark.** The two networks differ in architecture, epoch count (300 full-batch vs 50 mini-batch) and preprocessing. The numbers show both run on the GPU at sub-second scale; they do not establish that one model is faster than the other.
+- **28 windows is far too small for dfencoder.** It is built for per-user fingerprinting over large event volumes. Training a neural autoencoder on 28 rows means the agreement figures above are about this fixture, not a general claim. The three-way comparison needs re-running on a substantially larger dataset before any conclusion about relative accuracy.
+- dfencoder emits `Initializing zero-element tensors is a no-op` because the feature set is entirely numeric — it allocated empty categorical-embedding layers. Harmless, and a reminder that these features use none of its categorical machinery, which is where DFP's real strength lies.
+- Early stopping is disabled (`patience=-1`) as there is no validation split at this data size.
+- This is the model library, not the Morpheus pipeline runtime, so no claim is made to end-to-end cuDF-accelerated streaming.
+
+**How to state it:** "NVIDIA Morpheus's Digital Fingerprinting autoencoder was integrated as a third interchangeable model in the detection pipeline's inference slot, requiring one new adapter file and no modification to any other component. On identical data it selected exactly the same anomalous windows as the Isolation Forest baseline — agreement between two methodologically unrelated detectors — and both matched the rule engine's brute-force declarations in full."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
@@ -373,4 +410,6 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | LLM alert-explanation quality assessment | **PARTIAL 2026-10-10 (R15)** — qualitative, 2 documents | a scored rubric over many detections |
 | Autoencoder comparison vs Isolation Forest | **DONE 2026-09-09 (R12)** | — |
 | Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
+| NVIDIA Morpheus model in the inference slot | **DONE 2026-10-10 (R16)** | — |
+| Three-model comparison on a large dataset | not started | a dataset of thousands of windows |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |

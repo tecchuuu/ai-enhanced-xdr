@@ -373,7 +373,13 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
 - **Fix:** deleted the partial blob and went back to the systemd service, configuring it by drop-in rather than by running the daemon by hand.
 - **Lesson:** the same partition trap as Entry 23, reached from a different direction — on this image only `/` is large, and *any* path under `/home`, `/var`, or `/tmp` is on a ~10 GB volume. Check `df -h` before writing anything multi-gigabyte, and prefer configuring a service over re-running it as yourself, since the service account's paths are part of its configuration.
 
-## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live)
+### Entry 30 — pip's temp and cache directories are on the small volumes too (Entry 29, third instance)
+- Installing Morpheus's pip requirements died at 596/665 MB of the `nvidia-cudnn-cu12` wheel with `OSError: [Errno 28] No space left on device`, despite the conda env itself living on the 3.1 TB volume.
+- pip unpacks wheels under `$TMPDIR` (`/tmp`, 4.9 GB) and caches downloads in `~/.cache/pip` (`/home`, ~4 GB free). A torch build pulling ~2.5 GB of CUDA wheels exhausts either.
+- **Fix:** `export TMPDIR=/LuckyFive/tmp PIP_CACHE_DIR=/LuckyFive/pip-cache` (both on `/`), after clearing the partial cache.
+- **Lesson:** the third separate outage from the same root cause (Entries 23, 29). Installing a package is not one destination but three — the environment, a staging directory, and a cache — and on this image only `/` can hold any of them. The durable fix is to set those paths once in the shell profile rather than rediscover it per tool; recorded in SETUP.md so the next person does not pay for it a fourth time.
+
+## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live; Morpheus in the slot)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
   - Mock: Isolation Forest caught 5/5 planted anomalies, ~1% FPR, CPU. Claim B on controlled labelled data.

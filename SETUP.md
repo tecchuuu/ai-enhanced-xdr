@@ -8,6 +8,7 @@ Only the non-obvious / SIAM-specific steps are spelled out.
 - **Shared hardware** → keep everything in Docker; `docker compose down` when you stop (removes containers, so nothing lingers on reboot).
 - **No Claude API key here** → the LLM explainer runs on **Ollama** (local model on the H100), not Anthropic.
 - **Secrets (`.env`) are NOT in git** → recreate on this box (step 4).
+- **Only `/` is large.** `/` is 3.3 TB; `/home`, `/var` and `/tmp` are each ~10 GB LVs. Anything multi-gigabyte must be told to use `/`: Docker (step 1), conda (step 8), and pip (`export TMPDIR=/LuckyFive/tmp PIP_CACHE_DIR=/LuckyFive/pip-cache`). Three separate outages came from this — failure log Entries 23, 29, 30.
 
 ## 1. System (sudo, once)
 - `sudo apt install -y git python3-venv python3-pip curl`
@@ -34,14 +35,51 @@ Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from
 - `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml up -d`
 - `./ai-stack/start_all.sh`  (uvicorn + producer + consumer, via nohup)
 
-## 6. Ollama (LLM explainer — fills report §4.8)
+## 6. Ollama (LLM explainer — R15)
 - `curl -fsSL https://ollama.com/install.sh | sh`
-- `ollama pull llama3.2`  (a 70B fits in 80GB VRAM if you want bigger)
-- explainer picks it up via `EXPLAINER_PROVIDER=ollama`; restart the API after editing `.env`
+- `ollama pull gemma3:12b` (9.2 GB resident; 80 GB VRAM fits far bigger if wanted)
+- **Required:** cap the context, or model load dies with `CUDA error: unspecified launch failure` — Ollama defaults to the model's full 131072 tokens and reserves an 8.8 GB KV cache (failure log Entry 28):
+  ```
+  sudo mkdir -p /etc/systemd/system/ollama.service.d
+  sudo tee /etc/systemd/system/ollama.service.d/override.conf <<'EOF'
+  [Service]
+  Environment="OLLAMA_CONTEXT_LENGTH=4096"
+  EOF
+  sudo systemctl daemon-reload && sudo systemctl restart ollama
+  ```
+- `.env`: `EXPLAINER_PROVIDER=ollama`, `OLLAMA_MODEL=gemma3:12b`; restart the API after editing
+- verify without the stack: `python scripts/test_explainer.py mock ollama`
+- confirm it is on the GPU: `ollama ps` → `100% GPU`
+
+## 8. Morpheus (third model in the inference slot — R16)
+`morpheus-core` links RAPIDS and the MRC C++ engine, so it is **conda-only** — it cannot go in `ml-venv`. It is a Python library, not a service: nothing to run, only to import.
+
+```
+curl -fsSLo /tmp/miniforge.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash /tmp/miniforge.sh -b -p /LuckyFive/miniforge3          # NOT ~/, /home is 10 GB
+/LuckyFive/miniforge3/bin/conda config --add pkgs_dirs /LuckyFive/miniforge3/pkgs
+/LuckyFive/miniforge3/bin/conda config --add envs_dirs /LuckyFive/miniforge3/envs
+source /LuckyFive/miniforge3/etc/profile.d/conda.sh
+conda create -y -n morpheus python=3.12 && conda activate morpheus
+conda config --env --add channels conda-forge && conda config --env --add channels nvidia
+conda config --env --add channels rapidsai   && conda config --env --add channels pytorch
+conda install -y -c nvidia morpheus-core=25.06
+export TMPDIR=/LuckyFive/tmp PIP_CACHE_DIR=/LuckyFive/pip-cache   # or pip fills /tmp
+MORPHEUS_CORE_PKG_DIR=$(dirname $(python -c "import morpheus; print(morpheus.__file__)"))
+pip install -r ${MORPHEUS_CORE_PKG_DIR}/requirements_morpheus_core_arch-$(arch).txt
+pip install pandas scikit-learn kafka-python opensearch-py python-dotenv requests
+```
+Verify: `python -c "from morpheus.models.dfencoder import AutoEncoder; print('OK')"` and `python -c "import torch; print(torch.cuda.is_available())"`.
+
+Run the three-model comparison (needs this env; the other two models run anywhere):
+```
+python scripts/compare_models.py --models isolation_forest,autoencoder,morpheus_dfencoder
+```
+To run the live consumer on Morpheus: `conda activate morpheus` then `DETECTOR_MODEL=morpheus_dfencoder python detection_consumer.py`. Takes ~25 min of installs end to end; the conda solve is the slow part.
 
 ## 7. When done
 - `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.
 
-## Later (stretch, unpredictable — budget multi-day each)
-- **Morpheus on H100** (DFP, Kafka-native source) — real throughput numbers for the report.
-- **DPU network lane** — Suricata on BlueField-3 → EVE JSON → separate Kafka consumer + model.
+## Later (stretch, unpredictable)
+- **Three-model comparison on a large dataset** — the 28-window fixture is too small for the neural models to show their advantage (R16 honest notes).
+- **DPU network lane** — blocked: the BlueField-3 is provisioned but its host `rshim` driver is broken, so the card cannot be managed (failure log Entry 27). Fallback is a software Suricata/Zeek sensor on the host → EVE JSON → separate Kafka consumer + model.

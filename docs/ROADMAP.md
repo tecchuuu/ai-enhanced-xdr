@@ -36,9 +36,11 @@ the "swap not rewrite" claim in the README; keep it true.
 (`isolation_forest.py`, `autoencoder.py`), one interface `fit_score(X, contamination)`,
 selected by `DETECTOR_MODEL` in `.env`. Swapping is a config change, not a code edit.
 Autoencoder built (PyTorch, device-aware CPU/GPU) and compared head-to-head with IF (results
-log R12: comparable, autoencoder slightly broader on the low-and-slow phase). **On SIAM:** Morpheus's `dfencoder` becomes a third
-registry entry occupying the same slot — the CPU autoencoder is the portable proof of the
-same method. Bigger data (below) is where the autoencoder is expected to pull ahead.
+log R12: comparable, autoencoder slightly broader on the low-and-slow phase). **Morpheus done (2026-10-10, R16):** `dfencoder` is the third
+registry entry — one new file, one registry line, zero consumer changes. It selected the
+identical 5 windows as Isolation Forest on the fixture. Note the scoping decision: Morpheus's
+*model* in this pipeline, not Morpheus's *pipeline runtime* replacing it. Bigger data is
+where the neural models are expected to pull ahead, and where this comparison must be re-run.
 
 ## 2b. Data — sourced independently (NOT supplied by SIAM)
 **Correction (2026-10-10):** SIAM does not supply datasets — they are sourced online
