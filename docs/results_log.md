@@ -292,6 +292,31 @@ Both flag all 3 rule windows (05:06, 05:07, 05:30) **and** the meaningful slow-a
 
 ---
 
+## R14 — Autoencoder on the H100: same verdicts, 3.7x faster fit
+
+**Measured:** whether moving the inference slot onto real GPU hardware changes *what* the system detects, or only *how fast* it decides — and whether the swap needs any code change.
+
+**Setup:** identical 28-window auth fixture (`data/windowed_features.csv`, now committed so both machines score the same data), identical seed (42), `contamination=0.15`, same registry entry `models/autoencoder.py`. Only the hardware differs. The SIAM GPU became usable on 2026-10-10 after the provider resolved the fabric/passthrough fault that caused CUDA Error 802 (failure log Entry 23 follow-up); `torch 2.11.0+cu128` reports `cuda.is_available() == True`, Fabric State `N/A`, Compute Mode `Default`, 0 MiB in use by other tenants.
+
+**Result:**
+
+| Run | Device | Fit time | Flagged | Agree w/ rule 5712 | IF-only | AE-only |
+|---|---|---|---|---|---|---|
+| Local VM | CPU | 3.494 s | 6 | 3/3 | 1 | 2 |
+| SIAM | NVIDIA H100 80GB HBM3 | **0.939 s** | 6 | 3/3 | 1 | 2 |
+
+Flag-for-flag identical across both devices — same 6 windows, same agreement structure with Isolation Forest (`both=4`), same 3/3 coverage of the rule-declared brute-force windows. Fit time fell 3.7x.
+
+**Why that is the point, not a disappointment:** a GPU is a throughput device, not a different model. 28 windows x 5 features is far below the size where an H100 can stretch, and the near-identical numbers are evidence the device-aware code path is *correct* — the same seeded network converges to the same reconstruction errors on either backend. The speedup is therefore the floor, not the ceiling: it is what GPU execution buys at trivial scale, and the headroom (80 GB HBM3, 0% utilised at this size) is what makes the larger runs in "still to be produced" feasible.
+
+**Swap cost:** zero code change. `DETECTOR_MODEL` selects the slot, and `autoencoder.py` resolves `cuda` vs `cpu` at fit time. The same file ran on both machines untouched — the "swap not rewrite" claim, now demonstrated across hardware as well as across models.
+
+**Method note:** fit timing is taken after `torch.cuda.synchronize()`. CUDA kernels are asynchronous, so timing without the barrier measures queue-submission, not computation, and would have reported a fictitious speedup.
+
+**How to state it:** "Relocating the inference slot from CPU to an NVIDIA H100 required no code modification and produced identical detection verdicts at 3.7x faster model fit, confirming that GPU acceleration in this architecture is a performance property rather than a change in detection behaviour."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
@@ -300,7 +325,8 @@ State these explicitly — they strengthen credibility rather than weaken it:
 2. **No successful-login baseline.** Generated "normal" traffic used incorrect credentials, so all captured events are failures. A genuine normal baseline of successful logins would improve the model's notion of normal.
 3. **Short observation window.** Approximately 27 minutes of events (91 records). At 5-minute aggregation this yields only ~6 windows, below the sample size at which Isolation Forest output is statistically meaningful. The 05:24 false positive is a direct consequence.
 4. **Single host.** One monitored endpoint; no multi-agent or multi-user behavioural variation.
-5. **CPU-only execution.** GPU deployment via NVIDIA Morpheus is a documented deployment target, not part of this demonstration (see §1.4.2).
+5. **GPU used for the inference slot only.** The autoencoder now fits on the SIAM H100 (R14), but the rest of the chain — ingestion, Kafka, rules, dashboard — remains CPU, by design (§3 of the sponsor brief). NVIDIA Morpheus is the remaining GPU-native component.
+6. **No BlueField-3 DPU.** The DPU was specified in the environment but never provisioned, so the network lane uses a software sensor (Zeek/Suricata) emitting the same EVE-JSON shape instead of DPU-offloaded telemetry.
 
 ---
 
@@ -314,4 +340,5 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | Response time / MTTR measurement | not started | automated response playbook |
 | LLM alert-explanation quality assessment | not started | Local LLM integration |
 | Autoencoder comparison vs Isolation Forest | **DONE 2026-09-09 (R12)** | — |
+| Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |

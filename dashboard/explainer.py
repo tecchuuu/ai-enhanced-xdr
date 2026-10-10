@@ -13,8 +13,10 @@ Provider is selected by the EXPLAINER_PROVIDER env var (default "mock"):
              No model, no network — works now, and is the honest fallback for
              the report ("explanation layer implemented; model deferred").
   ollama     Local model via the Ollama HTTP API (http://localhost:11434).
-             The "when RAM arrives" target — a small model (llama3.2:3b,
-             qwen2.5:1.5b) is enough for this task. Untested here.
+             Live on the SIAM H100 since 2026-10-10 with gemma3:12b (R15).
+             Detection fields never leave the box. Note that Ollama's default
+             131072-token context must be lowered (OLLAMA_CONTEXT_LENGTH) or
+             model load crashes — see failure log; 4096 is ample here.
   anthropic  Hosted Claude API. Fast and good, but it sends detection fields
              (source IPs, usernames) off-box — a data-egress decision to make
              explicitly in the report. Requires `pip install anthropic` and
@@ -30,7 +32,7 @@ import requests
 
 PROVIDER       = os.environ.get("EXPLAINER_PROVIDER", "mock")
 OLLAMA_URL     = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL   = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+OLLAMA_MODEL   = os.environ.get("OLLAMA_MODEL", "gemma3:12b")
 # claude-opus-5 is the SDK default; claude-haiku-4-5 is plenty for a 2-sentence
 # explanation and ~5x cheaper — set ANTHROPIC_MODEL to switch.
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
