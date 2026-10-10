@@ -4,11 +4,56 @@ Overall flow. Assumes you know `git clone` + `pip install -r requirements.txt`.
 Only the non-obvious / SIAM-specific steps are spelled out.
 
 ## What's different on this box
-- **Shared Docker daemon** (2 groups per VM) → one Docker service runs both groups' containers; your *directory does not isolate you*. Name clashes are unlikely (different projects) but possible if both groups use the official `wazuh-docker` (both default to project `single-node`). Cheap insurance: prefix compose commands with `-p luckyfive_wazuh` / `-p luckyfive_kafka` (optional, not mandatory). **What actually matters: take turns + `compose down` when done** — host ports (:443, :9200, :8000) can only bind once on a shared VM, and `-p` does NOT fix that.
+- **Shared Docker daemon** (2 groups per VM) → one Docker service runs both groups' containers; your *directory does not isolate you*. Prefix compose commands with `-p luckyfive_wazuh` / `-p luckyfive_kafka` so container and volume names stay distinct. **Host ports are the real conflict** — they bind once regardless of project name, and `-p` does NOT fix that. Every host port is configurable now: see **§0** and claim free ones rather than waiting for the other group to stop.
 - **Shared hardware** → keep everything in Docker; `docker compose down` when you stop (removes containers, so nothing lingers on reboot).
 - **No Claude API key here** → the LLM explainer runs on **Ollama** (local model on the H100), not Anthropic.
 - **Secrets (`.env`) are NOT in git** → recreate on this box (step 4).
 - **Only `/` is large.** `/` is 3.3 TB; `/home`, `/var` and `/tmp` are each ~10 GB LVs. Anything multi-gigabyte must be told to use `/`: Docker (step 1), conda (step 8), and pip (`export TMPDIR=/LuckyFive/tmp PIP_CACHE_DIR=/LuckyFive/pip-cache`). Three separate outages came from this — failure log Entries 23, 29, 30.
+
+## 0. Shared VM: claim free host ports first
+
+Two groups share this VM and **host ports bind once** — container names, compose
+project names (`-p luckyfive_*`) and separate volumes do *not* isolate them. If
+the other group's stack is up, yours will not start, and (worse) a client
+pointed at a default port can silently attach to *their* broker.
+
+Check what is taken:
+
+```
+docker ps --format 'table {{.Names}}\t{{.Ports}}'      # theirs are edrxdr-* / wazuh-*
+ss -tlnp | grep -E ':(443|514|1514|1515|8000|9092|9200|55000)\b'
+```
+
+Every host port is now configurable, so you never have to wait for them. Observed
+2026-10-10: the other group held 9200, 9201, 9092, 1514, 1515, 55000 and 8443.
+Working set that avoids those:
+
+| File | Setting | Value |
+|---|---|---|
+| `wazuh/.env` | `INDEXER_PORT` | 9202 |
+| `wazuh/.env` | `DASHBOARD_PORT` | 443 (free; theirs is on 8443) |
+| `wazuh/.env` | `WAZUH_AGENT_PORT` / `WAZUH_ENROLL_PORT` | 1516 / 1517 |
+| `wazuh/.env` | `WAZUH_SYSLOG_PORT` | 515 |
+| `wazuh/.env` | `WAZUH_API_PORT` | 55001 |
+| `wazuh/.env` | `INDEXER_PASSWORD` | your admin password |
+| `ai-stack/.env` | `KAFKA_HOST_PORT` | 29092 |
+| `dashboard/.env` | `OS_PORT` | 9202 |
+| `dashboard/.env` | `KAFKA_BOOTSTRAP` | localhost:29092 |
+| `dashboard/.env` | `WAZUH_API_URL` | https://localhost:55001 |
+
+Copy from the `.env.example` next to each. Compose reads `.env` from the
+directory of the compose file, so run compose from `wazuh/` and `ai-stack/`.
+
+**Two things that bite:**
+- `KAFKA_HOST_PORT` and `KAFKA_BOOTSTRAP` must agree. Kafka advertises its port
+  to clients, so a mismatch redirects them after connecting. The consumers print
+  the broker address at startup — read that line.
+- **The agent must be told the new manager port.** It defaults to 1514, which is
+  the *other group's* manager. On the monitored host edit `<port>` in
+  `/var/ossec/etc/ossec.conf` to `WAZUH_AGENT_PORT` and restart `wazuh-agent`,
+  or it will register with the wrong stack.
+
+Courtesy, not a dependency: tell the other group which ports you took.
 
 ## 1. System (sudo, once)
 - `sudo apt install -y git python3-venv python3-pip curl`
@@ -51,7 +96,7 @@ Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from
 - verify without the stack: `python scripts/test_explainer.py mock ollama`
 - confirm it is on the GPU: `ollama ps` → `100% GPU`
 
-## 8. Morpheus (third model in the inference slot — R16)
+## 7. Morpheus (third model in the inference slot — R16)
 `morpheus-core` links RAPIDS and the MRC C++ engine, so it is **conda-only** — it cannot go in `ml-venv`. It is a Python library, not a service: nothing to run, only to import.
 
 ```
@@ -77,7 +122,7 @@ python scripts/compare_models.py --models isolation_forest,autoencoder,morpheus_
 ```
 To run the live consumer on Morpheus: `conda activate morpheus` then `DETECTOR_MODEL=morpheus_dfencoder python detection_consumer.py`. Takes ~25 min of installs end to end; the conda solve is the slow part.
 
-## 7. When done
+## 8. When done
 - `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.
 
 ## Later (stretch, unpredictable)

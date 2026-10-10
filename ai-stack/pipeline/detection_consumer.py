@@ -32,6 +32,10 @@ from models import get_model
 from opensearchpy import OpenSearch, helpers
 
 # ----------------------------------------------------------------- config
+# Kafka's address is configurable: on a shared VM another group's broker may own
+# the default port, and silently attaching to THEIR topic is worse than failing
+# to connect at all, so the address in use is printed at startup.
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC          = "wazuh-archives"
 WINDOW_SEC     = 60      # aggregate events into 1-minute windows
 SCORE_EVERY    = 60      # attempt scoring every N seconds
@@ -51,7 +55,7 @@ USER_RE = re.compile(r"(?:invalid user |user )([A-Za-z0-9_.-]+)")
 # ----------------------------------------------------------------- clients
 consumer = KafkaConsumer(
     TOPIC,
-    bootstrap_servers="localhost:9092",
+    bootstrap_servers=KAFKA_BOOTSTRAP,
     auto_offset_reset="latest",          # only new events
     group_id="xdr-detector",
     consumer_timeout_ms=1000,            # so the loop can breathe and score on schedule
@@ -222,7 +226,7 @@ def prune():
 
 
 # ----------------------------------------------------------------- main loop
-print(f"Consuming '{TOPIC}' -> {_MODEL.label} -> {AI_INDEX}")
+print(f"Consuming '{TOPIC}' from {KAFKA_BOOTSTRAP} -> {_MODEL.label} -> {AI_INDEX}")
 print(f"Windows: {WINDOW_SEC}s | scoring every {SCORE_EVERY}s | "
       f"min {MIN_WINDOWS} windows | Ctrl-C to stop\n")
 

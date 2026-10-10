@@ -379,6 +379,13 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
 - **Fix:** `export TMPDIR=/LuckyFive/tmp PIP_CACHE_DIR=/LuckyFive/pip-cache` (both on `/`), after clearing the partial cache.
 - **Lesson:** the third separate outage from the same root cause (Entries 23, 29). Installing a package is not one destination but three — the environment, a staging directory, and a cache — and on this image only `/` can hold any of them. The durable fix is to set those paths once in the shell profile rather than rediscover it per tool; recorded in SETUP.md so the next person does not pay for it a fourth time.
 
+### Entry 31 — Blocked by the other group's stack; host ports ignore project namespacing
+- Attempting the end-to-end run found 9200, 9201, 9092, 1514, 1515, 55000 and 8443 already bound by the other group's containers (`edrxdr-*`, project `wazuh`), left running for three days. Our own stack could not start.
+- The project had assumed `-p luckyfive_wazuh` provided isolation. It does not: compose project names scope *container and volume names*, never host port bindings, which bind once per host.
+- Worse than a failure to start: `localhost:9092` was **hardcoded** in three pipeline files. With their broker on 9092 and ours absent, the producer would have published into *their* Kafka — a cross-contamination that no error message would have reported.
+- **Fix:** every host port moved into compose variables (`wazuh/.env`, `ai-stack/.env`) with the current values as defaults, so nothing changes on a machine you own; `KAFKA_BOOTSTRAP` added to the pipeline and **printed in each consumer's startup banner**, so the broker in use is always visible. Documented as SETUP.md §0 with a known-free port set.
+- **Lesson:** the instinct was to stop their containers. Their `edrxdr-replay-*` containers had been up 39-40 hours — an evaluation run, the same kind this project ran overnight in August. Shared infrastructure makes "just restart it" someone else's lost dataset. Being *configurable* is the durable answer: it removed the dependency on their schedule entirely, and took twenty minutes.
+
 ## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live; Morpheus in the slot)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**

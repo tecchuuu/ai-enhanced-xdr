@@ -1,11 +1,13 @@
 """Dummy producer + consumer. No ML. Proves messages flow through Kafka."""
 from kafka import KafkaProducer, KafkaConsumer
-import json, time
+import json, os, time
+
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 
 TOPIC = "wazuh-archives"
 
 producer = KafkaProducer(
-    bootstrap_servers="localhost:9092",
+    bootstrap_servers=KAFKA_BOOTSTRAP,
     value_serializer=lambda v: json.dumps(v).encode(),
 )
 for i in range(5):
@@ -16,7 +18,7 @@ producer.flush()
 
 consumer = KafkaConsumer(
     TOPIC,
-    bootstrap_servers="localhost:9092",
+    bootstrap_servers=KAFKA_BOOTSTRAP,
     auto_offset_reset="earliest",
     consumer_timeout_ms=5000,          # stop after 5s of silence
     value_deserializer=lambda v: json.loads(v.decode()),

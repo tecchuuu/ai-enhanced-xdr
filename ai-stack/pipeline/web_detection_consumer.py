@@ -39,6 +39,10 @@ from opensearchpy import OpenSearch, helpers
 load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
 
 # ----------------------------------------------------------------- config
+# Kafka's address is configurable: on a shared VM another group's broker may own
+# the default port, and silently attaching to THEIR topic is worse than failing
+# to connect at all, so the address in use is printed at startup.
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC          = "wazuh-archives"
 WINDOW_SEC     = 60      # aggregate events into 1-minute windows
 SCORE_EVERY    = 60      # attempt scoring every N seconds
@@ -64,7 +68,7 @@ TRAVERSAL_RE = re.compile(r"(\.\./|\.\.\\|%2e%2e|/etc/passwd|\bboot\.ini\b|%00)"
 # ----------------------------------------------------------------- clients
 consumer = KafkaConsumer(
     TOPIC,
-    bootstrap_servers="localhost:9092",
+    bootstrap_servers=KAFKA_BOOTSTRAP,
     auto_offset_reset="latest",          # only new events
     group_id="xdr-web-detector",         # distinct from the auth consumer's group
     consumer_timeout_ms=1000,            # so the loop can breathe and score on schedule
@@ -277,7 +281,7 @@ def prune():
 
 
 # ----------------------------------------------------------------- main loop
-print(f"Consuming '{TOPIC}' (web view) -> {_MODEL.label} -> {AI_INDEX}")
+print(f"Consuming '{TOPIC}' (web view) from {KAFKA_BOOTSTRAP} -> {_MODEL.label} -> {AI_INDEX}")
 print(f"Windows: {WINDOW_SEC}s | scoring every {SCORE_EVERY}s | "
       f"min {MIN_WINDOWS} windows | Ctrl-C to stop\n")
 

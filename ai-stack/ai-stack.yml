@@ -7,7 +7,11 @@ services:
     hostname: kafka
     restart: unless-stopped
     ports:
-      - "9092:9092"          # published to the VM so host Python scripts can connect
+      # Host port is configurable because the SIAM VM is shared: another group's
+      # broker may already hold 9092, and a host port can only bind once no
+      # matter what the containers are named. Container-side port matches so the
+      # advertised address stays correct (see KAFKA_ADVERTISED_LISTENERS).
+      - "${KAFKA_HOST_PORT:-9092}:${KAFKA_HOST_PORT:-9092}"
     environment:
       # --- KRaft: this node is both broker and controller (no ZooKeeper) ---
       KAFKA_NODE_ID: 1
@@ -16,8 +20,13 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
       # --- listeners ---
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      # CONTROLLER stays on 9093: it is internal only (never published), and
+      # changing it would not match KAFKA_CONTROLLER_QUORUM_VOTERS recorded in
+      # the existing metadata log.
+      KAFKA_LISTENERS: PLAINTEXT://:${KAFKA_HOST_PORT:-9092},CONTROLLER://:9093
+      # Must equal the port clients dial, or Kafka redirects them elsewhere
+      # after the initial connection.
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:${KAFKA_HOST_PORT:-9092}"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
 
       # --- single-node: no replication available ---

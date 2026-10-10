@@ -30,10 +30,14 @@ TOPIC = "wazuh-archives"
 # Which Wazuh manager container to tail. On a SHARED Docker host, set WAZUH_CONTAINER
 # in dashboard/.env to YOUR project-prefixed name (e.g. LuckyFive_wazuh-wazuh.manager-1)
 # so this can only ever tail your own manager, never another group's.
+# Kafka's address is configurable: on a shared VM another group's broker may own
+# the default port, and silently attaching to THEIR topic is worse than failing
+# to connect at all, so the address in use is printed at startup.
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 CONTAINER = os.environ.get("WAZUH_CONTAINER", "single-node-wazuh.manager-1")
 
 producer = KafkaProducer(
-    bootstrap_servers="localhost:9092",
+    bootstrap_servers=KAFKA_BOOTSTRAP,
     value_serializer=lambda v: json.dumps(v).encode(),
 )
 
@@ -61,7 +65,7 @@ def bye(*_):
 signal.signal(signal.SIGINT, bye)
 signal.signal(signal.SIGTERM, bye)
 
-print(f"Publishing Wazuh archive events to Kafka topic '{TOPIC}'")
+print(f"Publishing Wazuh archive events to Kafka topic '{TOPIC}' at {KAFKA_BOOTSTRAP}")
 print(f"Container: {CONTAINER}   (Ctrl-C to stop)")
 
 while True:

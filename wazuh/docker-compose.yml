@@ -12,14 +12,17 @@ services:
         soft: 655360
         hard: 655360
     ports:
-      - "1514:1514"
-      - "1515:1515"
-      - "514:514/udp"
-      - "55000:55000"
+      # Host ports are configurable: the SIAM VM is shared and another group's
+      # Wazuh may already hold these. Container-side ports never change, so
+      # agents and the API are reached on whichever host port is published.
+      - "${WAZUH_AGENT_PORT:-1514}:1514"
+      - "${WAZUH_ENROLL_PORT:-1515}:1515"
+      - "${WAZUH_SYSLOG_PORT:-514}:514/udp"
+      - "${WAZUH_API_PORT:-55000}:55000"
     environment:
       - INDEXER_URL=https://wazuh.indexer:9200
       - INDEXER_USERNAME=admin
-      - INDEXER_PASSWORD=SecretPassword
+      - INDEXER_PASSWORD=${INDEXER_PASSWORD:-SecretPassword}
       - FILEBEAT_SSL_VERIFICATION_MODE=full
       - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
       - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
@@ -48,7 +51,7 @@ services:
     hostname: wazuh.indexer
     restart: always
     ports:
-      - "9200:9200"
+      - "${INDEXER_PORT:-9200}:9200"
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
     ulimits:
@@ -73,10 +76,10 @@ services:
     hostname: wazuh.dashboard
     restart: always
     ports:
-      - 443:5601
+      - "${DASHBOARD_PORT:-443}:5601"
     environment:
       - INDEXER_USERNAME=admin
-      - INDEXER_PASSWORD=SecretPassword
+      - INDEXER_PASSWORD=${INDEXER_PASSWORD:-SecretPassword}
       - WAZUH_API_URL=https://wazuh.manager
       - DASHBOARD_USERNAME=kibanaserver
       - DASHBOARD_PASSWORD=kibanaserver
