@@ -46,10 +46,11 @@ independently. The per-lane requirement is unchanged, and the coherent-slice rul
 holds (never mix lanes):
 - **Auth lane** → SIAM Linux auth logs (multi-host, multi-user, real IPs) directly
   retire the single-host / single-IP / no-success-baseline limits in results-log §5.3.
-- **Network lane** → **the BlueField-3 DPU was never provisioned** (failure log Entry 27),
-  so this lane runs a software sensor: Suricata or Zeek on the host, emitting the same
-  EVE-JSON records. Public Zeek/Suricata captures fit that shape directly; CICIDS2017 is
-  an optional external benchmark, not the plan (different schema).
+- **Network lane** → the BlueField-3 DPU is provisioned but **unreachable** (host `rshim`
+  driver broken, so the DPU's ARM complex can't be managed; failure log Entry 27). Lane is
+  deferred pending a provider fix; fallback is a software Suricata/Zeek sensor emitting the
+  same EVE-JSON. Public Zeek/Suricata captures fit that shape directly; CICIDS2017 is an
+  optional external benchmark, not the plan (different schema).
 
 ## 3. LLM is a READER, not a pipeline stage — LIVE on the H100
 The LLM consumes existing `ai-detections-*` docs and writes a 2-sentence analyst
