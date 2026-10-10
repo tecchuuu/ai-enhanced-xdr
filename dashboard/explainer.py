@@ -36,6 +36,9 @@ OLLAMA_MODEL   = os.environ.get("OLLAMA_MODEL", "gemma3:12b")
 # claude-opus-5 is the SDK default; claude-haiku-4-5 is plenty for a 2-sentence
 # explanation and ~5x cheaper — set ANTHROPIC_MODEL to switch.
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
+# consumers flag at roughly this score; used to tell the model outright whether
+# a detection is strong or borderline instead of making it compare negatives
+FLAG_THRESHOLD  = float(os.environ.get("FLAG_THRESHOLD", "-0.5"))
 
 SYSTEM_PROMPT = (
     "You are a SOC analyst assistant. Given one anomaly detection from an "
@@ -55,6 +58,24 @@ CHAT_SYSTEM = (
 
 
 # ----------------------------------------------------------------- prompt
+def _score_line(score):
+    """State the score's relation to the threshold outright.
+
+    Left to infer it, a small model reads "-0.71" against a "-0.5 threshold"
+    and reports the detection as borderline — the sign flips the comparison and
+    it gets it backwards (observed with gemma3:12b, R15). Computing the verdict
+    here costs nothing and removes the only grounding error seen in testing.
+    """
+    if score is None:
+        return "Anomaly score: unavailable"
+    margin = FLAG_THRESHOLD - score          # positive = past the threshold
+    verdict = (f"{margin:.2f} PAST the flag threshold of {FLAG_THRESHOLD} — a strong detection"
+               if margin > 0.1 else
+               f"only {abs(margin):.2f} from the flag threshold of {FLAG_THRESHOLD} — borderline")
+    return (f"Anomaly score: {score} (scale: more negative = more anomalous). "
+            f"This score is {verdict}.")
+
+
 def _summarise(doc):
     """Flatten an ai-detections document into a labelled block for the model."""
     ai = doc.get("ai", {})
@@ -63,8 +84,7 @@ def _summarise(doc):
         f"Detection: {rule.get('description', 'anomalous behaviour')}",
         f"Heuristic category: {ai.get('category', 'unclassified')}"
         + (f" (MITRE {ai['mitre']})" if ai.get("mitre") else ""),
-        f"Anomaly score: {ai.get('anomaly_score')}  "
-        f"(more negative = more anomalous; ~-0.5 is the flag threshold)",
+        _score_line(ai.get("anomaly_score")),
         f"Aggregation window: {ai.get('window', '60s')}",
         f"Time: {doc.get('timestamp')}",
     ]
