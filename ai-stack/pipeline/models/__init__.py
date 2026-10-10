@@ -14,16 +14,25 @@ Both consumers pick their model by name at startup:
     model = get_model(os.environ.get("DETECTOR_MODEL", "isolation_forest"))
 
 So swapping Isolation Forest <-> autoencoder is a config change
-(DETECTOR_MODEL in dashboard/.env), not a code edit. Adding a new model
-(e.g. Morpheus's dfencoder on the SIAM H100) is one new file here + one
-registry entry — nothing in the consumers changes. This is ROADMAP rule 2.
+(DETECTOR_MODEL in dashboard/.env), not a code edit. Adding a new model is one new
+file here + one registry entry — nothing in the consumers changes. Done for
+real with Morpheus's dfencoder (2026-10-10), which is why there are three
+entries and no consumer diff. This is ROADMAP rule 2.
+
+Each model's heavy dependency is imported lazily inside its own fit_score, so
+the registry loads everywhere: Isolation Forest needs only scikit-learn, the
+autoencoder needs torch, and morpheus_dfencoder needs the Morpheus conda env.
+Selecting a model you have no environment for fails at fit time with a plain
+ImportError, not at import of the registry.
 """
 from .isolation_forest import IsolationForestDetector
 from .autoencoder import AutoencoderDetector
+from .morpheus_dfencoder import MorpheusDFEncoderDetector
 
 _REGISTRY = {
     "isolation_forest": IsolationForestDetector,
     "autoencoder": AutoencoderDetector,
+    "morpheus_dfencoder": MorpheusDFEncoderDetector,
 }
 
 def get_model(name):
