@@ -40,32 +40,34 @@ log R12: comparable, autoencoder slightly broader on the low-and-slow phase). **
 registry entry occupying the same slot — the CPU autoencoder is the portable proof of the
 same method. Bigger data (below) is where the autoencoder is expected to pull ahead.
 
-## 2b. Data — SIAM can supply comparable datasets per lane
-SIAM AI offered sample/baseline logs so every group has comparable data: firewall,
-web access, Windows event, **Linux auth**, **Zeek/Suricata**, PCAP, IOC feed. Use them
-per lane, never mixed (coherent-slice rule still holds):
+## 2b. Data — sourced independently (NOT supplied by SIAM)
+**Correction (2026-10-10):** SIAM does not supply datasets — they are sourced online
+independently. The per-lane requirement is unchanged, and the coherent-slice rule still
+holds (never mix lanes):
 - **Auth lane** → SIAM Linux auth logs (multi-host, multi-user, real IPs) directly
   retire the single-host / single-IP / no-success-baseline limits in results-log §5.3.
-- **Network lane** → SIAM Zeek/Suricata logs are the *same EVE-JSON shape* the BlueField
-  DPU lane emits, so they fit that lane's model directly — a better match than CICIDS2017
-  (different schema). CICIDS drops to an optional external benchmark, not the plan.
-Net: less dataset-hunting, and the auth lane finally gets realistic multi-source data.
+- **Network lane** → **the BlueField-3 DPU was never provisioned** (failure log Entry 27),
+  so this lane runs a software sensor: Suricata or Zeek on the host, emitting the same
+  EVE-JSON records. Public Zeek/Suricata captures fit that shape directly; CICIDS2017 is
+  an optional external benchmark, not the plan (different schema).
 
-## 3. RAM arrives → LLM is a READER, not a pipeline stage
+## 3. LLM is a READER, not a pipeline stage — LIVE on the H100
 The LLM consumes existing `ai-detections-*` docs and writes a 2-sentence analyst
 explanation back onto the doc (`ai.explanation`). The flyout displays it. It
 attaches on top; it never sits in the detection path (a slow/dead LLM must never
 delay detection — same reasoning as Kafka decoupling rules from AI).
 
-**Status: built, on the `mock` provider.** `dashboard/explainer.py` +
+**Status: live on `ollama` (gemma3:12b, H100). `mock` remains the no-model fallback.** `dashboard/explainer.py` +
 `POST /api/explain` (one-shot, written onto the doc) + `POST /api/explain/chat`
 (follow-up Q&A, thread held client-side) + an "Analyst assistant" panel in the
 flyout: explain → then ask questions about that detection. Provider is one env
 var, `EXPLAINER_PROVIDER`:
 - `mock` (default) — deterministic template from the detection's own fields.
   Works now; this is the honest "explanation layer done, model deferred" state.
-- `ollama` — local model via `http://localhost:11434` (llama3.2:3b etc.). The
-  RAM-arrives target. Untested.
+- `ollama` — local model via `http://localhost:11434`. **LIVE since 2026-10-10
+  (R15):** gemma3:12b on the SIAM H100, 0.8-1.2 s per explanation warm, nothing
+  leaves the box. Requires `OLLAMA_CONTEXT_LENGTH=4096` on the Ollama service —
+  its 131072 default crashes model load (failure log Entry 28).
 - `anthropic` — hosted Claude API (`pip install anthropic`, `ANTHROPIC_API_KEY`).
   Sends detection fields off-box — a data-egress call to make explicitly in the
   report. Untested.

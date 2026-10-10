@@ -353,7 +353,26 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
 ### Note — GPU compute blocked on the SIAM VM (see memory: siam-gpu-fabric-blocker)
 - `nvidia-smi` and `--gpus all` containers see the H100, but CUDA won't initialise (Error 802, Fabric State "In Progress"); Fabric Manager can't run (no NVSwitch) and there's no IMEX service. Provider-side passthrough issue, ticket raised. CPU pipeline unaffected; GPU components (Morpheus, LLM, autoencoder-on-GPU) pending the fix.
 
-## BUILD STATUS (last updated: 2026-09-09 — deployed on SIAM H100 VM)
+## PHASE: GPU unblocked — LLM explainer and GPU inference (2026-10-10)
+
+### Entry 27 — The CUDA blocker was provider-side after all (resolved, 31 days)
+- Entry 23's note recorded CUDA Error 802 with GPU Fabric State "In Progress" and judged it a provider-side passthrough fault, not something fixable in the guest. A ticket was raised 2026-09-09. SIAM resolved it; confirmed working 2026-10-10: Fabric State now reports `N/A` (i.e. not applicable for this single-GPU passthrough, rather than pending), `torch 2.11.0+cu128` returns `cuda.is_available() == True`, and `docker run --gpus all` reaches the device.
+- **Lesson:** the diagnosis that mattered was *whose layer the fault is on*, not what the fix was. Having established the guest could not resolve it, the correct action was a precise ticket (symptom, expected state, what was ruled out) and then working CPU-side for a month rather than guessing at driver reinstalls. The cost of being wrong about that attribution would have been a damaged driver stack on a shared box; the cost of being right was a 31-day wait during which every CPU-satisfiable deliverable was finished.
+- **Still absent: the BlueField-3 DPU.** Specified in the environment and never provisioned. The planned network lane therefore substitutes a software sensor (Suricata/Zeek on the host) emitting the same EVE-JSON records the DPU would have produced. Document as a substitution with its honest cost: no hardware offload, so the lane cannot claim line-rate inspection.
+
+### Entry 28 — Ollama crashed on load: a 131072-token default context, not a GPU fault
+- `ollama run gemma3:12b` failed with `CUDA error: unspecified launch failure` at model warmup — alarming immediately after a month-long CUDA outage, and the obvious reading was that the GPU was still broken.
+- It was not. The log showed the model loading *successfully*: `offloaded 49/49 layers to GPU`, `CUDA0 KV buffer size = 8192.00 MiB` allocated without error. Allocation working but the first kernel launch failing is a different class of fault from a dead CUDA context — and `torch` had already proven the device healthy minutes earlier.
+- Cause: Ollama defaulted to the model's full `n_ctx = 131072`, reserving an 8.8 GB KV cache and building a 1927-node graph that failed to launch. `OLLAMA_CONTEXT_LENGTH=4096` fixed it outright. Flash Attention was suspected first and exonerated — re-enabling it with the smaller context works fine.
+- **Fix:** systemd drop-in at `/etc/systemd/system/ollama.service.d/override.conf` setting `OLLAMA_CONTEXT_LENGTH=4096`. Ample for 2–3 sentence explanations.
+- **Lesson:** a CUDA error does not imply a CUDA problem. Read *how far* the process got — successful device allocation followed by a launch failure points at the workload's shape, not the hardware. Also: the first thing tried (disabling Flash Attention) appeared to work only because the same command changed two variables at once; isolating them afterwards is what identified the real cause.
+
+### Entry 29 — `/home` is a 9.8 GB volume too (the Entry 23 trap, second instance)
+- Running `ollama serve` as `saiuser` instead of via systemd moved the model store from `/usr/share/ollama/.ollama` (on `/`, 3.1 TB free) to `~/.ollama` — and `/home` is its own 9.8 GB LV on this image. A 7.3 GB pull filled it to **100%, 0 bytes free**.
+- **Fix:** deleted the partial blob and went back to the systemd service, configuring it by drop-in rather than by running the daemon by hand.
+- **Lesson:** the same partition trap as Entry 23, reached from a different direction — on this image only `/` is large, and *any* path under `/home`, `/var`, or `/tmp` is on a ~10 GB volume. Check `df -h` before writing anything multi-gigabyte, and prefer configuring a service over re-running it as yourself, since the service account's paths are part of its configuration.
+
+## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
   - Mock: Isolation Forest caught 5/5 planted anomalies, ~1% FPR, CPU. Claim B on controlled labelled data.

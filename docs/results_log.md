@@ -317,6 +317,38 @@ Flag-for-flag identical across both devices — same 6 windows, same agreement s
 
 ---
 
+## R15 — LLM alert explanation live on the H100 (local model, no data egress)
+
+**Measured:** whether the explanation layer — built in September against a deterministic `mock` provider — produces usable analyst prose when a real model is dropped behind it, and at what latency.
+
+**Setup:** Ollama on the SIAM VM serving **gemma3:12b** (Google DeepMind open weights, 9.2 GB resident), fully GPU-resident on the H100 (`ollama ps`: `100% GPU`, 10,427 MiB of 81,559 MiB). `EXPLAINER_PROVIDER=ollama`. The explainer was exercised through `scripts/test_explainer.py`, which feeds it two documents shaped exactly like real `ai-detections-*` docs — one per lane — plus one follow-up question, with no Wazuh, Kafka or OpenSearch running. This isolates the explanation layer as an independent unit.
+
+**Result — latency:**
+
+| Call | Time |
+|---|---|
+| First explanation (includes model load into VRAM) | 7.01 s |
+| Warm explanation (auth lane) | 0.80 s |
+| Warm explanation (web lane) | 1.13 s |
+| Warm follow-up question | 1.23 s |
+
+**Result — quality.** The model grounded its explanations in the supplied numbers and invented nothing. On the web detection it picked `/admin` and `/.git/config` out of the top-URLs list unprompted and named them as the reconnaissance signal — the one piece of genuine analyst judgement in the output, and not something the `mock` template produces. Asked whether the detection was a false positive, it declined to overclaim and stated plainly that it had no historical data on the IP or accounts, which is correct: the explainer is given one document and nothing else.
+
+**One grounding error, found and fixed.** The first run reported an anomaly score of **-0.71** as *"just below the threshold (-0.5)"* — backwards. The prompt had supplied the score and the threshold and left the comparison to the model; on negative numbers a 12B model gets it wrong. The fix computes the verdict in code (`_score_line`) and states it outright — *"0.21 PAST the flag threshold of -0.5 — a strong detection"*. On re-run the model correctly called it strong and *"likely not a false positive"*. Worth recording as a method point: **where a numeric comparison decides the analyst's conclusion, compute it and assert it; do not ask the model to reason about it.**
+
+**Architecture claim upheld.** No change to the detection path. The explainer remains a reader of already-written detection documents, invoked on demand from the flyout — a slow or dead model delays nothing, which is why a 7 s cold start is acceptable here and would not be inside the pipeline. Switching from `mock` to a GPU-hosted 12B model was one environment variable; the prompt, the field flattening, and the writeback are shared across providers.
+
+**Privacy note for the report:** the model runs on the same VM as the pipeline. Source IPs, usernames and URLs never leave the host. The alternative `anthropic` provider would export those fields to a third party — available, deliberately not used.
+
+**Honest notes:**
+- Still phrasing slips: the model writes that a score is "significantly higher than our threshold" where *further past* is meant, and compresses "17 events per user across 2 users" into "a user experienced 17 failed login attempts". Neither is fabrication; both are imprecision, and they are the reason the explanation is positioned as triage assistance rather than as a finding.
+- Explanation quality is assessed qualitatively on two representative documents. A scored rubric over a larger sample of detections remains future work.
+- `gemma4:12b` was tried first and crashed — Ollama's bundled llama.cpp does not yet support that architecture (released the previous day). Model choice here favours a mature tag over a new one; the provider is indifferent to which.
+
+**How to state it:** "The explanation layer was validated with a 12-billion-parameter open-weight model hosted locally on the H100, producing analyst-ready prose in under 1.3 seconds per detection with no detection data leaving the host. Replacing the deterministic template provider with the model required one configuration change and no modification to the detection pipeline."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
@@ -338,7 +370,7 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | Multi-scale windowing comparison (1 / 5 / 15 min) | not started | needs the longer run above |
 | Streaming throughput measurement (events/sec) | pipeline ready | needs sustained traffic to measure |
 | Response time / MTTR measurement | not started | automated response playbook |
-| LLM alert-explanation quality assessment | not started | Local LLM integration |
+| LLM alert-explanation quality assessment | **PARTIAL 2026-10-10 (R15)** — qualitative, 2 documents | a scored rubric over many detections |
 | Autoencoder comparison vs Isolation Forest | **DONE 2026-09-09 (R12)** | — |
 | Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |
