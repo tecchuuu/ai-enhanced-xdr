@@ -5,6 +5,8 @@ logs/
 archive_*.json
 auth_events.csv
 windowed_*.csv
+# ...except the committed comparison fixture (gitignore has no trailing comments)
+!data/windowed_features.csv
 overnight_traffic.sh
 .env
 node_modules/

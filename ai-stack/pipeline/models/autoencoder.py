@@ -15,6 +15,8 @@ Contract: fit_score(X, contamination) -> (flags, scores)
   scores mapped so LOWER = more anomalous (matches IsolationForest), keeping the
   consumers' severity()/writeback code model-agnostic.
 """
+import time
+
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
@@ -27,6 +29,8 @@ class AutoencoderDetector:
         self.epochs = epochs
         self.lr = lr
         self.seed = seed
+        self.last_device = None   # set by fit_score: "cuda:0" / "cpu" (evidence for the report)
+        self.last_fit_sec = None
 
     def fit_score(self, X, contamination):
         import torch
@@ -34,6 +38,9 @@ class AutoencoderDetector:
 
         torch.manual_seed(self.seed)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.last_device = (torch.cuda.get_device_name(0) + " (cuda)"
+                            if device.type == "cuda" else "cpu")
 
         Xv = np.asarray(X, dtype=np.float32)
         if Xv.ndim == 1:
@@ -51,6 +58,7 @@ class AutoencoderDetector:
             nn.Linear(hidden, d),
         ).to(device)
 
+        t0 = time.perf_counter()
         opt = torch.optim.Adam(model.parameters(), lr=self.lr)
         loss_fn = nn.MSELoss()
         model.train()
@@ -59,6 +67,10 @@ class AutoencoderDetector:
             loss = loss_fn(model(t), t)
             loss.backward()
             opt.step()
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()          # async kernels: time nothing until they finish
+        self.last_fit_sec = round(time.perf_counter() - t0, 3)
 
         model.eval()
         with torch.no_grad():

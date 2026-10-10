@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ai-stack" / "pipeline"))
 from models import get_model  # noqa: E402
 
-CSV = sys.argv[1] if len(sys.argv) > 1 else str(Path.home() / "root-backup" / "windowed_features.csv")
+CSV = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "data" / "windowed_features.csv")
 CONTAM = 0.15
 FEATURES = ["event_count", "distinct_users", "max_level", "hour", "events_per_user"]
 
@@ -26,10 +26,15 @@ X = df[FEATURES].fillna(0)
 rule = df["rule_5712_fired"].astype(int) if "rule_5712_fired" in df.columns else None
 
 flagged = {}
+devices = {}
 for name in ("isolation_forest", "autoencoder"):
-    flags, scores = get_model(name).fit_score(X, CONTAM)
+    m = get_model(name)
+    flags, scores = m.fit_score(X, CONTAM)
     df[f"{name}_flag"] = flags
     flagged[name] = (flags == -1)
+    # report the hardware each slot actually ran on (the autoencoder picks up CUDA if present)
+    devices[name] = (f"{m.last_device}, fit {m.last_fit_sec}s"
+                     if getattr(m, "last_device", None) else "cpu (scikit-learn)")
 
 print(f"Dataset: {CSV}  ({len(df)} windows, contamination={CONTAM})\n")
 if rule is not None:
@@ -38,6 +43,7 @@ if rule is not None:
 for name in ("isolation_forest", "autoencoder"):
     f = flagged[name]
     line = f"{name:16s}: flagged {int(f.sum()):2d}"
+    line += f"  | ran on: {devices[name]}"
     if rule is not None:
         line += f"  | agree w/ rule: {int((f & (rule == 1)).sum())}  | model-only: {int((f & (rule == 0)).sum())}"
     print(line)
