@@ -42,12 +42,15 @@ export default function ExplainPanel({ alert, onRefresh }) {
   const [provider, setProvider] = useState(null);
   const endRef = useRef(null);
 
+  // reset only when a different alert is opened — the list polls and hands us a
+  // fresh object for the same alert, which would otherwise wipe the Q&A thread
   useEffect(() => {
     setThread(alert?.explanation ? [{ role: "assistant", content: alert.explanation }] : []);
     setProvider(alert?.explained_by ?? null);
     setInput("");
     setError(null);
-  }, [alert]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alert?.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
