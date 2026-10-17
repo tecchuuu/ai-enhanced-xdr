@@ -2,8 +2,21 @@ const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 async function fetchJson(path) {
   const res = await fetch(`${API}${path}`);
-  if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `${path.split("?")[0]} -> HTTP ${res.status}`);
+  }
   return res.json();
+}
+
+// {a: 1, b: undefined} -> "?a=1"; empty values are left out
+function query(params = {}) {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== "") p.set(k, v);
+  }
+  const s = p.toString();
+  return s ? `?${s}` : "";
 }
 
 async function postJson(path, payload) {
@@ -18,19 +31,36 @@ async function postJson(path, payload) {
 }
 
 export const getHealth = () => fetchJson("/api/health");
-export const getRuleAlerts = (limit = 100, minLevel = 0) =>
-  fetchJson(`/api/alerts/rule?limit=${limit}&min_level=${minLevel}`);
-export const getAiAlerts = (limit = 100) => fetchJson(`/api/alerts/ai?limit=${limit}`);
-export const getCombined = (limit = 200) => fetchJson(`/api/alerts/combined?limit=${limit}`);
-export const getHistogram = (hours = 24, interval = "30m") =>
-  fetchJson(`/api/alerts/histogram?hours=${hours}&interval=${interval}`);
-export const getTopSrcIps = (hours = 24) => fetchJson(`/api/alerts/top_srcips?hours=${hours}`);
+
+// scoped endpoints take {start, end, agent} (see lib/scope.js) plus their own
+// params, in the API's snake_case: limit, min_level, q
+export const getRuleAlerts = (params) => fetchJson(`/api/alerts/rule${query(params)}`);
+export const getAiAlerts = (params) => fetchJson(`/api/alerts/ai${query(params)}`);
+export const getCombined = (params) => fetchJson(`/api/alerts/combined${query(params)}`);
+export const getHistogram = (params) => fetchJson(`/api/alerts/histogram${query(params)}`);
+export const getTopSrcIps = (params) => fetchJson(`/api/alerts/top_srcips${query(params)}`);
+export const getMetrics = (params) => fetchJson(`/api/metrics${query(params)}`);
+
+export const getAlertDoc = (alertId) => fetchJson(`/api/alerts/doc${query({ alert_id: alertId })}`);
+export const getRelated = (alertId) =>
+  fetchJson(`/api/alerts/related${query({ alert_id: alertId })}`);
+export const getIpEntity = (ip) => fetchJson(`/api/entities/ip/${encodeURIComponent(ip)}`);
+
 export const getAgents = () => fetchJson("/api/agents");
 export const getResponseLog = (limit = 100) => fetchJson(`/api/response/log?limit=${limit}`);
 export const getBlockedIps = () => fetchJson("/api/response/blocked");
-export const getMetrics = (hours = 168) => fetchJson(`/api/metrics?hours=${hours}`);
 
-export function setTriage({ alertId, status, assignee, note, falsePositive, alertRef, alertTimestamp, alertSource }) {
+export function setTriage({
+  alertId,
+  status,
+  assignee,
+  note,
+  falsePositive,
+  alertRef,
+  alertTimestamp,
+  alertSource,
+  alertAgent,
+}) {
   return postJson("/api/triage", {
     alert_id: alertId,
     status,
@@ -40,6 +70,7 @@ export function setTriage({ alertId, status, assignee, note, falsePositive, aler
     alert_ref: alertRef,
     alert_timestamp: alertTimestamp,
     alert_source: alertSource,
+    alert_agent: alertAgent,
   });
 }
 

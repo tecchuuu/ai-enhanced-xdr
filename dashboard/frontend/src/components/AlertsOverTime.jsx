@@ -16,16 +16,15 @@ import {
 } from "@elastic/eui";
 import { useTheme, usePalette, useChartTheme } from "../theme/ThemeProvider";
 
-export default function AlertsOverTime({ buckets, hours }) {
+// buckets/interval from /api/alerts/histogram; from/to (ms) are the range it
+// was asked for, so the axis spans the selected range even when it's sparse
+export default function AlertsOverTime({ buckets, interval, from, to }) {
   const { baseTheme } = useTheme();
   const p = usePalette();
   const theme = useChartTheme();
 
   const hasData = buckets?.some((b) => b.rule || b.ai);
-  const domain =
-    buckets?.length > 1
-      ? [buckets[0].time, buckets[buckets.length - 1].time]
-      : [Date.now() - 864e5, Date.now()];
+  const domain = from && to ? [from, to] : [Date.now() - 864e5, Date.now()];
 
   return (
     <EuiPanel hasBorder>
@@ -34,7 +33,7 @@ export default function AlertsOverTime({ buckets, hours }) {
       </EuiTitle>
       <EuiText size="s" color="subdued">
         <p>
-          Rule alerts (level 10+) and AI detections per interval, last {hours}.
+          Rule alerts (level 10+) and AI detections per {interval ?? "interval"}.
           A teal bar with no orange beside it = the model caught something the
           ruleset stayed silent on.
         </p>
@@ -82,10 +81,10 @@ export default function AlertsOverTime({ buckets, hours }) {
           <EuiEmptyPrompt
             iconType="visBarVertical"
             titleSize="xs"
-            title={<h3>No alerts in this window</h3>}
+            title={<h3>No alerts in this range</h3>}
             body={
               <p>
-                Nothing at level 10+ and no AI detections in the last {hours}.
+                Nothing at level 10+ and no AI detections in the selected range.
                 Generate some traffic, or widen the time range.
               </p>
             }

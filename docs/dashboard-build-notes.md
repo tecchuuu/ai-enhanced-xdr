@@ -15,8 +15,44 @@ analyst act on it" story — not decoration.
 | **Metrics** — live rule-vs-AI comparison, FP rate, MTTR | `GET /api/metrics` | new **Metrics** page |
 | **Category breakdown** — AI detections by heuristic category | none — counted in the browser from the loaded detections, so it always matches the table | chart on the **AI detections** page |
 | **Blocked-IP management** — current block set + unblock | `GET /api/response/blocked`, `POST /api/response/unblock-ip` | `BlockedIps` component on the Response log page |
+| **Scope** — one time range + agent for the console | `start` / `end` / `agent` on every list and chart endpoint | date picker + agent selector in the page header (Overview, Security events, AI detections, Metrics) |
+| **Search** — IP, user, rule id or text across all fields | `q` on `/api/alerts/rule` and `/api/alerts/ai` | search field on both feeds |
+| **IP pivot** — everything on one source address, all time | `GET /api/entities/ip/{ip}` | `IpFlyout`, opened from any IP link or the top-IPs chart |
+| **Related events** — rule alerts around one alert | `GET /api/alerts/related` | panel in `AlertFlyout` |
+| **Raw document** — the stored `_source` behind an alert | `GET /api/alerts/doc` | accordion in `AlertFlyout` |
 
 ## Contracts
+
+### Scope (`start`, `end`, `agent`)
+The header's date picker holds date-math strings (`now-24h`); the client
+resolves them to ISO at every fetch (`lib/scope.js`) so a relative range keeps
+sliding. Feeds without `start`/`end` are all-time (the legacy split view relies
+on this); charts and metrics default to the last 24h / 7d. `agent` is matched
+with `match_phrase` on `agent.name`, which works for the keyword mapping in
+`wazuh-alerts-*` and the analyzed text in the dynamically mapped
+`ai-detections-*`. The histogram picks its bucket size from the range (≤ ~60
+bars) and returns it as `interval`.
+
+### Search (`q`)
+`simple_query_string`, every term required, over `RULE_SEARCH_FIELDS` /
+`AI_SEARCH_FIELDS` in `main.py` (includes `full_log`, users, IPs, URLs —
+fields the table doesn't show). Runs on Enter. The table's own filter is now
+only the triage-state buttons.
+
+### Related events (`/api/alerts/related?alert_id=`)
+Rule alerts at any level, 5 minutes either side of the alert (plus the AI
+window's length), matched on the alert's source IPs (`ai.top_srcips` for a
+detection, `data.srcip` for a rule alert); with no IP, on its agent. A rule
+alert excludes itself. For an AI detection this is the closest thing to "the
+events the model saw" — archives aren't indexed, but each decoded sshd/web
+event raises a low-level rule alert.
+
+### IP entity (`/api/entities/ip/{ip}`)
+All-time, not scoped: rule alerts (`data.srcip`) and AI detections
+(`ai.top_srcips.ip`), latest 200 of each with triage merged, totals,
+first/last seen (min/max across both), targeted accounts (`data.srcuser` +
+`data.dstuser`), agents, and the current block state from
+`/api/response/blocked`.
 
 ### Alert identity
 Every alert from `/api/alerts/*` now carries `id = "<source>:<opensearch _id>"`
@@ -32,14 +68,16 @@ Every alert from `/api/alerts/*` now carries `id = "<source>:<opensearch _id>"`
   "alert_ref": "100001 — AI: anomalous auth …",
   "alert_timestamp": "2026-08-27T10:00:00+00:00",
   "alert_source": "ai | rule",
+  "alert_agent": "ubuntu-vm",
   "created_at": "…",
   "updated_at": "…",
   "resolved_at": "… | null"
 }
 ```
-`alert_timestamp` / `alert_source` are copied from the alert at write time so
-`/api/metrics` can compute FP rate and MTTR without joining back to the alert
-indices. `resolved_at` is set on the first move to `resolved` / `false_positive`
+`alert_timestamp` / `alert_source` / `alert_agent` are copied from the alert at
+write time so `/api/metrics` can compute FP rate and MTTR for the current scope
+without joining back to the alert indices (under an agent filter, records
+written before `alert_agent` existed are left out). `resolved_at` is set on the first move to `resolved` / `false_positive`
 and kept on later edits, so touching a closed alert's note doesn't stretch MTTR;
 it is cleared if the alert is reopened.
 
@@ -116,8 +154,15 @@ The flyout shows the explanation for AI alerts with an "Explain this detection" 
       intact. Then ask a follow-up in the panel → `/api/explain/chat` replies.
       Mock provider works offline; try `ollama` once a model is pulled, or
       `EXPLAINER_PROVIDER=anthropic` with a key.
-- [ ] Frontend builds: `cd dashboard/frontend && npm install && npm run build`
-      (not run here — no Node on the build machine).
+- [ ] Search hits on the real mappings: an IP in Security events (keyword
+      `data.srcip`) and in AI detections (analyzed `ai.top_srcips.ip`), a
+      username, a rule id. The test double can't check analyzers.
+- [ ] Agent selector narrows both feeds and the Overview tiles.
+- [ ] Related events on a real AI detection list the sshd alerts from its IP;
+      the IP pivot's first/last seen and accounts look right for the attacker.
+- [x] Frontend builds: `npm ci && npm run build` passes (Node 24, Vite 8),
+      `oxlint` clean apart from the fast-refresh notices in `badges.jsx` /
+      `ThemeProvider.jsx`.
 
 ## Not built (future work — one line each in ROADMAP / บทที่ 5)
 

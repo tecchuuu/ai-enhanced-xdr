@@ -11,10 +11,14 @@ import {
   EuiSideNav,
   EuiTextColor,
   EuiToolTip,
+  EuiSuperDatePicker,
+  EuiSelect,
 } from "@elastic/eui";
-import { getHealth } from "./api";
+import { getHealth, getAgents } from "./api";
 import { usePolling } from "./lib/usePolling";
+import { IpContext } from "./lib/ipContext";
 import { useTheme } from "./theme/ThemeProvider";
+import IpFlyout from "./components/IpFlyout";
 import Overview from "./pages/Overview";
 import SecurityEvents from "./pages/SecurityEvents";
 import AiDetections from "./pages/AiDetections";
@@ -25,18 +29,21 @@ import Agents from "./pages/Agents";
 const REFRESH_MS = 15000;
 
 // Every page carries a one-line description — a bare title reads as unfinished.
+// scoped pages read the header's time range + agent and show those controls.
 const PAGES = {
   overview: {
     title: "Overview",
     icon: "dashboardApp",
     description: "Signature rules and the anomaly model, side by side.",
     component: Overview,
+    scoped: true,
   },
   events: {
     title: "Security events",
     icon: "alert",
     description: "Alerts raised by the Wazuh ruleset, with severity and triage state.",
     component: SecurityEvents,
+    scoped: true,
   },
   ai: {
     title: "AI detections",
@@ -44,6 +51,7 @@ const PAGES = {
     description:
       "Windows the anomaly model scored as deviating from baseline, with their anomaly score.",
     component: AiDetections,
+    scoped: true,
   },
   metrics: {
     title: "Metrics",
@@ -51,6 +59,7 @@ const PAGES = {
     description:
       "Live rule-vs-AI comparison: overlap, false-positive rate, and mean time to resolve.",
     component: Metrics,
+    scoped: true,
   },
   responses: {
     title: "Response log",
@@ -78,6 +87,13 @@ export default function App() {
   const [page, setPage] = useState("overview");
   const [connected, setConnected] = useState(null); // null = connecting
   const [updatedAt, setUpdatedAt] = useState(null);
+  // the scope every scoped page reads: date-math strings straight from the
+  // picker (resolved per fetch, see lib/scope.js) and an agent name ("" = all)
+  const [range, setRange] = useState({ start: "now-24h", end: "now" });
+  const [agent, setAgent] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [agents, setAgents] = useState([]);
+  const [ip, setIp] = useState(null); // the IP pivot flyout, opened from anywhere
 
   // each page loads and polls its own data; the header only tracks the API
   usePolling(async (isCurrent) => {
@@ -90,6 +106,38 @@ export default function App() {
       if (isCurrent()) setConnected(false);
     }
   }, REFRESH_MS);
+
+  // agent list for the selector; empty (just "All agents") while the Wazuh API is down
+  usePolling(async (isCurrent) => {
+    try {
+      const { agents } = await getAgents();
+      if (isCurrent()) setAgents(agents);
+    } catch {
+      /* keep the last list */
+    }
+  }, 60000);
+
+  const scope = { ...range, agent, refreshKey };
+  const scopeControls = [
+    <EuiSuperDatePicker
+      key="time"
+      start={range.start}
+      end={range.end}
+      onTimeChange={({ start, end, isInvalid }) => !isInvalid && setRange({ start, end })}
+      onRefresh={() => setRefreshKey((k) => k + 1)}
+      width="auto"
+    />,
+    <EuiSelect
+      key="agent"
+      aria-label="Agent"
+      options={[
+        { value: "", text: "All agents" },
+        ...agents.map((a) => ({ value: a.name, text: a.name })),
+      ]}
+      value={agent}
+      onChange={(e) => setAgent(e.target.value)}
+    />,
+  ];
 
   const navItems = NAV_GROUPS.map((g) => ({
     id: g.id,
@@ -106,7 +154,7 @@ export default function App() {
   const Page = PAGES[page].component;
 
   return (
-    <>
+    <IpContext.Provider value={setIp}>
       <EuiHeader>
         <EuiHeaderSection>
           <EuiHeaderSectionItem>
@@ -151,11 +199,13 @@ export default function App() {
         <EuiPageTemplate.Header
           pageTitle={PAGES[page].title}
           description={<EuiTextColor color="subdued">{PAGES[page].description}</EuiTextColor>}
+          rightSideItems={PAGES[page].scoped ? scopeControls : undefined}
         />
         <EuiPageTemplate.Section>
-          <Page />
+          <Page scope={scope} />
         </EuiPageTemplate.Section>
       </EuiPageTemplate>
-    </>
+      {ip && <IpFlyout ip={ip} onClose={() => setIp(null)} />}
+    </IpContext.Provider>
   );
 }

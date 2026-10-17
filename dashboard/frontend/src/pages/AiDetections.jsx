@@ -1,31 +1,38 @@
 import { useState } from "react";
-import { EuiPanel, EuiSpacer, EuiCallOut } from "@elastic/eui";
+import { EuiPanel, EuiSpacer, EuiCallOut, EuiFlexGroup, EuiFlexItem, EuiText } from "@elastic/eui";
 import { getAiAlerts } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { scopeParams, scopeDeps } from "../lib/scope";
 import { usePalette } from "../theme/ThemeProvider";
 import AlertsTable from "../components/AlertsTable";
 import HBarChart from "../components/HBarChart";
+import FeedSearch from "../components/FeedSearch";
 
 const LIMIT = 200;
 
 // detections written before the August enrichment carry no category
 const categoryLabel = (c) => (c ? c.replace(/_/g, " ") : "no category");
 
-export default function AiDetections() {
+export default function AiDetections({ scope }) {
   const p = usePalette();
+  const [q, setQ] = useState("");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  const refresh = usePolling(async (isCurrent) => {
-    try {
-      const d = await getAiAlerts(LIMIT);
-      if (!isCurrent()) return;
-      setData(d);
-      setError(null);
-    } catch (e) {
-      if (isCurrent()) setError(String(e.message ?? e));
-    }
-  }, 15000);
+  const refresh = usePolling(
+    async (isCurrent) => {
+      try {
+        const d = await getAiAlerts({ limit: LIMIT, q, ...scopeParams(scope) });
+        if (!isCurrent()) return;
+        setData(d);
+        setError(null);
+      } catch (e) {
+        if (isCurrent()) setError(String(e.message ?? e));
+      }
+    },
+    15000,
+    [q, ...scopeDeps(scope)]
+  );
 
   const alerts = data?.alerts ?? [];
 
@@ -49,12 +56,31 @@ export default function AiDetections() {
         color={p.ai}
         empty={{
           icon: "visBarVertical",
-          title: "No detections yet",
-          body: "Generate traffic and give the consumer ~10 minutes to fill its window buffer.",
+          title: "No detections in this range",
+          body: "Widen the time range, or generate traffic and give the consumer ~10 minutes to fill its window buffer.",
         }}
       />
       <EuiSpacer />
       <EuiPanel hasBorder>
+        <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false} wrap>
+          <EuiFlexItem style={{ minWidth: 260 }}>
+            <FeedSearch
+              placeholder="Search IP, URL, category or text, then Enter"
+              onSearch={(v) => {
+                setQ(v);
+                setData(null);
+              }}
+            />
+          </EuiFlexItem>
+          {data && (
+            <EuiFlexItem grow={false}>
+              <EuiText size="xs" color="subdued">
+                Latest {alerts.length} of {data.count.toLocaleString()}
+              </EuiText>
+            </EuiFlexItem>
+          )}
+        </EuiFlexGroup>
+        <EuiSpacer size="s" />
         {error && (
           <>
             <EuiCallOut title={`AI detections unavailable: ${error}`} color="danger" size="s" />

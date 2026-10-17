@@ -1,98 +1,78 @@
 import { useState } from "react";
-import {
-  EuiSpacer,
-  EuiTitle,
-  EuiPanel,
-  EuiText,
-  EuiFlexGroup,
-  EuiFlexItem,
-  EuiButtonGroup,
-} from "@elastic/eui";
+import { EuiSpacer, EuiTitle, EuiPanel, EuiText, EuiFlexGroup, EuiFlexItem } from "@elastic/eui";
 import { getHistogram, getTopSrcIps, getMetrics, getCombined } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { scopeParams, scopeDeps } from "../lib/scope";
+import { useOpenIp } from "../lib/ipContext";
 import { usePalette } from "../theme/ThemeProvider";
 import StatPanels from "../components/StatPanels";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
 import HBarChart from "../components/HBarChart";
 
-const RANGES = [
-  { id: "6", label: "6h", interval: "10m" },
-  { id: "24", label: "24h", interval: "30m" },
-  { id: "168", label: "7d", interval: "3h" },
-  { id: "720", label: "30d", interval: "12h" },
-];
-
-export default function Overview() {
+export default function Overview({ scope }) {
   const p = usePalette();
-  const [rangeId, setRangeId] = useState("24");
+  const openIp = useOpenIp();
   const [metrics, setMetrics] = useState(null);
-  const [buckets, setBuckets] = useState(null);
+  const [hist, setHist] = useState(null);
   const [ips, setIps] = useState(null);
   const [recent, setRecent] = useState(null);
 
-  const range = RANGES.find((r) => r.id === rangeId);
-
   usePolling(
     async (isCurrent) => {
+      const s = scopeParams(scope);
       try {
-        const [m, h, t] = await Promise.all([
-          getMetrics(Number(range.id)),
-          getHistogram(Number(range.id), range.interval),
-          getTopSrcIps(Number(range.id)),
-        ]);
+        const [m, h, t] = await Promise.all([getMetrics(s), getHistogram(s), getTopSrcIps(s)]);
         if (!isCurrent()) return;
         setMetrics(m);
-        setBuckets(h.buckets);
+        setHist({ ...h, from: Date.parse(s.start), to: Date.parse(s.end) });
         setIps(t.ips.map((i) => ({ label: i.ip, count: i.count })));
       } catch {
         /* header health indicator already reports API problems */
       }
     },
     30000,
-    [rangeId]
+    scopeDeps(scope)
   );
 
-  const refreshRecent = usePolling(async (isCurrent) => {
-    try {
-      const c = await getCombined(10);
-      if (isCurrent()) setRecent(c.alerts);
-    } catch {
-      /* as above */
-    }
-  }, 15000);
+  const refreshRecent = usePolling(
+    async (isCurrent) => {
+      try {
+        const c = await getCombined({ limit: 10, ...scopeParams(scope) });
+        if (isCurrent()) setRecent(c.alerts);
+      } catch {
+        /* as above */
+      }
+    },
+    15000,
+    scopeDeps(scope)
+  );
 
   return (
     <>
-      <StatPanels metrics={metrics} hours={range.label} />
+      <StatPanels metrics={metrics} />
       <EuiSpacer />
-      <EuiFlexGroup justifyContent="flexEnd" responsive={false}>
-        <EuiFlexItem grow={false}>
-          <EuiButtonGroup
-            legend="Time range"
-            options={RANGES.map(({ id, label }) => ({ id, label }))}
-            idSelected={rangeId}
-            onChange={setRangeId}
-            buttonSize="compressed"
-          />
-        </EuiFlexItem>
-      </EuiFlexGroup>
-      <EuiSpacer size="s" />
       <EuiFlexGroup>
         <EuiFlexItem grow={2}>
-          <AlertsOverTime buckets={buckets} hours={range.label} />
+          <AlertsOverTime
+            buckets={hist?.buckets}
+            interval={hist?.interval}
+            from={hist?.from}
+            to={hist?.to}
+          />
         </EuiFlexItem>
         <EuiFlexItem grow={1}>
           <HBarChart
             title="Top source IPs"
-            description={`Most active alert sources, last ${range.label}.`}
+            description="Most active alert sources in this range. Click a bar to investigate the IP."
             data={ips}
             seriesName="Alerts"
             color={p.single}
+            onBarClick={openIp}
             empty={{
               icon: "globe",
               title: "No source IPs yet",
-              body: `No alerts carrying a source IP in the last ${range.label}. Attacks from another host will populate this; loopback traffic will not.`,
+              body: "No alerts carrying a source IP in this range. Attacks from another host will populate this; loopback traffic will not.",
             }}
           />
         </EuiFlexItem>
@@ -104,12 +84,17 @@ export default function Overview() {
         </EuiTitle>
         <EuiText size="s" color="subdued">
           <p>
-            Most recent from both streams (rules at level 10+). Full feeds under Security
-            events and AI detections.
+            Most recent from both streams in this range (rules at level 10+). Full feeds
+            under Security events and AI detections.
           </p>
         </EuiText>
         <EuiSpacer size="s" />
-        <AlertsTable alerts={recent ?? []} loading={recent == null} onRefresh={refreshRecent} />
+        <AlertsTable
+          alerts={recent ?? []}
+          loading={recent == null}
+          showTriageFilter={false}
+          onRefresh={refreshRecent}
+        />
       </EuiPanel>
     </>
   );

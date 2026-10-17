@@ -83,7 +83,10 @@ npm install
 npm run dev
 ```
 Console: `http://localhost:5173` — Wazuh-style UI (same EUI component library)
-with rule + AI alerts, time charts, threat categories, alert detail flyout,
+with rule + AI alerts, a shared time range and agent filter, server-side search
+(IP, user, rule ID, text), time charts, threat categories, alert detail flyout
+with related events and the raw document, an IP pivot (every alert from an
+address, targeted accounts, block state — click any IP),
 per-alert triage (status / assignee / note / mark-false-positive), a **Metrics**
 page (live rule-vs-AI comparison, false-positive rate, MTTR), one-click IP
 blocking via Wazuh Active Response with an unblock action and current-block

@@ -1,5 +1,6 @@
 import ipaddress
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -54,6 +55,7 @@ def _fmt_rule(hit):
         "agent":       s.get("agent", {}).get("name"),
         "srcip":       s.get("data", {}).get("srcip"),
         "srcuser":     s.get("data", {}).get("srcuser"),
+        "dstuser":     s.get("data", {}).get("dstuser"),
         "source":      "rule",          # <-- the tag that separates rule vs AI
         # category: MITRE tactic when tagged, else the most specific rule group
         "category":    _first(mitre.get("tactic")) or (groups[-1] if groups else None),
@@ -96,18 +98,106 @@ def _fmt_ai(hit):
     }
 
 
-def _get_detection(doc_id):
-    """One ai-detections hit by _id, or an HTTPException the caller lets raise."""
+def _get_hit(index, doc_id):
+    """One document by _id across an index pattern, or an HTTPException the
+    caller lets raise."""
     try:
-        res = client.search(index=AI_INDEX, body={
+        res = client.search(index=index, body={
             "size": 1, "query": {"ids": {"values": [doc_id]}},
         })
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
     hits = res["hits"]["hits"]
     if not hits:
-        raise HTTPException(status_code=404, detail="detection not found")
+        raise HTTPException(status_code=404, detail="document not found")
     return hits[0]
+
+
+def _get_alert_hit(alert_id):
+    """Resolve a console alert id ("rule:<_id>" / "ai:<_id>") to its document."""
+    source, _, doc_id = alert_id.partition(":")
+    index = {"rule": RULE_INDEX, "ai": AI_INDEX}.get(source)
+    if not index or not doc_id:
+        raise HTTPException(status_code=400, detail=f"bad alert id '{alert_id}'")
+    return _get_hit(index, doc_id)
+
+
+# ----------------------------------------------------------------- query filters
+# Every list/chart endpoint takes the same scope from the console's header: a
+# time range (start/end, ISO — the client resolves the date picker's "now-24h"
+# before sending), an agent name, and on the feeds a free-text search.
+
+_TZ_NO_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
+
+
+def _parse_ts(value):
+    """ISO timestamp -> aware datetime, or None. Accepts Wazuh's "+0000" offsets."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(
+            _TZ_NO_COLON.sub(r"\1:\2", str(value).replace("Z", "+00:00")))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _window(start, end, default_hours):
+    """The requested range as datetimes; a missing bound falls back to
+    now / now - default_hours."""
+    end_dt = _parse_ts(end) or datetime.now(timezone.utc)
+    start_dt = _parse_ts(start) or end_dt - timedelta(hours=default_hours)
+    return start_dt, end_dt
+
+
+def _time_filter(start_dt, end_dt):
+    return {"range": {"timestamp": {"gte": start_dt.isoformat(),
+                                    "lte": end_dt.isoformat()}}}
+
+
+def _optional_time_filter(start, end):
+    """Feeds are all-time unless a range is passed (the legacy split view
+    passes none)."""
+    if not (start or end):
+        return []
+    return [_time_filter(*_window(start, end, default_hours=24))]
+
+
+def _agent_filter(agent):
+    # match_phrase, not term: agent.name is a keyword in wazuh-alerts but an
+    # analyzed text field in the dynamically mapped ai-detections index
+    return [{"match_phrase": {"agent.name": agent}}] if agent else []
+
+
+RULE_SEARCH_FIELDS = ["rule.description", "rule.id", "rule.groups", "data.srcip",
+                      "data.dstip", "data.srcuser", "data.dstuser", "agent.name",
+                      "full_log"]
+AI_SEARCH_FIELDS = ["rule.description", "ai.category", "ai.mitre", "ai.model",
+                    "ai.top_srcips.ip", "ai.top_urls.url", "agent.name"]
+
+
+def _search_filter(q, fields):
+    """The feed search box: an IP, user, rule id or words; every term must
+    match some field. lenient so a word against an ip/number field is a
+    non-match rather than an error."""
+    if not q:
+        return []
+    return [{"simple_query_string": {"query": q, "fields": fields,
+                                     "default_operator": "and", "lenient": True}}]
+
+
+# (name, seconds), smallest first; the histogram picks the first that keeps the
+# chart at or under ~60 bars (24h -> 30m, 7d -> 3h, 30d -> 12h)
+_INTERVALS = [("1m", 60), ("5m", 300), ("10m", 600), ("30m", 1800), ("1h", 3600),
+              ("3h", 10800), ("12h", 43200), ("1d", 86400), ("7d", 604800)]
+
+
+def _auto_interval(start_dt, end_dt, max_buckets=60):
+    span = (end_dt - start_dt).total_seconds()
+    for name, secs in _INTERVALS:
+        if span / secs <= max_buckets:
+            return name
+    return _INTERVALS[-1][0]
 
 
 # ----------------------------------------------------------------- triage state
@@ -148,12 +238,19 @@ def health():
     return {"status": "ok", "cluster": client.info()["cluster_name"]}
 
 @app.get("/api/alerts/rule")
-def rule_alerts(limit: int = 50, min_level: int = 0):
-    """Rule-based alerts from Wazuh."""
+def rule_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
+                end: str | None = None, agent: str | None = None,
+                q: str | None = None):
+    """Rule-based alerts from Wazuh, newest first, in the console's scope."""
     body = {
         "size": limit,
         "sort": [{"timestamp": {"order": "desc"}}],
-        "query": {"range": {"rule.level": {"gte": min_level}}},
+        "query": {"bool": {"filter": [
+            {"range": {"rule.level": {"gte": min_level}}},
+            *_optional_time_filter(start, end),
+            *_agent_filter(agent),
+            *_search_filter(q, RULE_SEARCH_FIELDS),
+        ]}},
     }
     res = client.search(index=RULE_INDEX, body=body)
     return {
@@ -174,12 +271,20 @@ def stats():
     return {"rule_alerts": total, "ai_alerts": ai_total}
 
 @app.get("/api/alerts/ai")
-def ai_alerts(limit: int = 50):
-    """AI-detected anomalies (source=morpheus_ai)."""
+def ai_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
+              end: str | None = None, agent: str | None = None,
+              q: str | None = None):
+    """AI-detected anomalies (source=morpheus_ai), newest first, in scope."""
     try:
         res = client.search(index=AI_INDEX, body={
             "size": limit,
             "sort": [{"timestamp": {"order": "desc"}}],
+            "query": {"bool": {"filter": [
+                {"range": {"rule.level": {"gte": min_level}}},
+                *_optional_time_filter(start, end),
+                *_agent_filter(agent),
+                *_search_filter(q, AI_SEARCH_FIELDS),
+            ]}},
         })
     except Exception:
         return {"count": 0, "alerts": []}      # index may not exist yet
@@ -190,16 +295,19 @@ def ai_alerts(limit: int = 50):
     }
 
 @app.get("/api/alerts/histogram")
-def histogram(hours: int = 24, interval: str = "30m", min_level: int = ATTACK_LEVEL):
-    """Alert counts over time, split rule vs AI — feeds the overview time chart."""
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=hours)
+def histogram(start: str | None = None, end: str | None = None,
+              agent: str | None = None, min_level: int = ATTACK_LEVEL):
+    """Alert counts over time, split rule vs AI — feeds the overview time chart.
+    The bucket size follows the range (see _auto_interval)."""
+    start_dt, end_dt = _window(start, end, default_hours=24)
+    interval = _auto_interval(start_dt, end_dt)
 
     def bucket_counts(index, extra_filters):
         body = {
             "size": 0,
             "query": {"bool": {"filter": [
-                {"range": {"timestamp": {"gte": start.isoformat()}}},
+                _time_filter(start_dt, end_dt),
+                *_agent_filter(agent),
                 *extra_filters,
             ]}},
             "aggs": {"t": {"date_histogram": {
@@ -207,8 +315,8 @@ def histogram(hours: int = 24, interval: str = "30m", min_level: int = ATTACK_LE
                 "fixed_interval": interval,
                 "min_doc_count": 0,
                 "extended_bounds": {
-                    "min": int(start.timestamp() * 1000),
-                    "max": int(now.timestamp() * 1000),
+                    "min": int(start_dt.timestamp() * 1000),
+                    "max": int(end_dt.timestamp() * 1000),
                 },
             }}},
         }
@@ -223,19 +331,21 @@ def histogram(hours: int = 24, interval: str = "30m", min_level: int = ATTACK_LE
                          [{"range": {"rule.level": {"gte": min_level}}}])
     ai = bucket_counts(AI_INDEX, [])
     keys = sorted(set(rule) | set(ai))
-    return {"buckets": [
+    return {"interval": interval, "buckets": [
         {"time": k, "rule": rule.get(k, 0), "ai": ai.get(k, 0)} for k in keys
     ]}
 
 
 @app.get("/api/alerts/top_srcips")
-def top_srcips(hours: int = 24, size: int = 10):
+def top_srcips(start: str | None = None, end: str | None = None,
+               agent: str | None = None, size: int = 10):
     """Most active source IPs across all alert levels — feeds the overview bar chart."""
-    start = datetime.now(timezone.utc) - timedelta(hours=hours)
+    start_dt, end_dt = _window(start, end, default_hours=24)
     body = {
         "size": 0,
         "query": {"bool": {"filter": [
-            {"range": {"timestamp": {"gte": start.isoformat()}}},
+            _time_filter(start_dt, end_dt),
+            *_agent_filter(agent),
             {"exists": {"field": "data.srcip"}},
         ]}},
         "aggs": {"ips": {"terms": {"field": "data.srcip", "size": size}}},
@@ -249,15 +359,143 @@ def top_srcips(hours: int = 24, size: int = 10):
 
 
 @app.get("/api/alerts/combined")
-def combined(limit: int = 100):
-    """Both streams merged, newest first — what the dashboard renders."""
-    rules = rule_alerts(limit=limit, min_level=ATTACK_LEVEL)["alerts"]
-    ai    = ai_alerts(limit=limit)["alerts"]
+def combined(limit: int = 100, start: str | None = None, end: str | None = None,
+             agent: str | None = None):
+    """Both streams merged, newest first (rules at attack level only)."""
+    scope = {"limit": limit, "start": start, "end": end, "agent": agent, "q": None}
+    rules = rule_alerts(min_level=ATTACK_LEVEL, **scope)["alerts"]
+    ai    = ai_alerts(min_level=0, **scope)["alerts"]
     merged = sorted(rules + ai, key=lambda a: a["timestamp"] or "", reverse=True)
     return {
         "rule_count": len(rules),
         "ai_count":   len(ai),
         "alerts":     merged[:limit],
+    }
+
+
+# ----------------------------------------------------------------- investigation
+
+@app.get("/api/alerts/doc")
+def alert_doc(alert_id: str):
+    """The stored document behind one console alert, untouched — the list
+    endpoints return a flattened subset (no full_log, decoder, location...)."""
+    hit = _get_alert_hit(alert_id)
+    return {"index": hit["_index"], "id": hit["_id"], "source": hit["_source"]}
+
+
+RELATED_MARGIN = timedelta(minutes=5)
+
+
+def _window_seconds(window):
+    """The detection's aggregation window ("60s") in seconds; 60 if unknown."""
+    m = re.fullmatch(r"(\d+)s", str(window or ""))
+    return int(m.group(1)) if m else 60
+
+
+@app.get("/api/alerts/related")
+def related_events(alert_id: str, limit: int = 200):
+    """Rule alerts at any level around one alert, from the same source IPs —
+    or, with no IP on the alert, the same agent. For an AI detection these are
+    the decoded events behind the anomalous window; for a rule alert, what else
+    that source did around it."""
+    hit = _get_alert_hit(alert_id)
+    s = hit["_source"]
+    ts = _parse_ts(s.get("timestamp") or s.get("@timestamp"))
+    if ts is None:
+        raise HTTPException(status_code=422, detail="alert has no timestamp")
+
+    if alert_id.startswith("ai:"):
+        ai = s.get("ai", {})
+        ips = [t["ip"] for t in ai.get("top_srcips") or [] if t.get("ip")]
+        span = timedelta(seconds=_window_seconds(ai.get("window")))
+    else:
+        ip = s.get("data", {}).get("srcip")
+        ips = [ip] if ip else []
+        span = timedelta(0)
+    agent = s.get("agent", {}).get("name")
+    start_dt, end_dt = ts - RELATED_MARGIN, ts + span + RELATED_MARGIN
+    result = {"basis": "srcip" if ips else "agent", "ips": ips, "agent": agent,
+              "start": start_dt.isoformat(), "end": end_dt.isoformat()}
+
+    if ips:
+        basis = {"bool": {"should": [{"match_phrase": {"data.srcip": ip}} for ip in ips],
+                          "minimum_should_match": 1}}
+    elif agent:
+        basis = {"match_phrase": {"agent.name": agent}}
+    else:
+        return {**result, "basis": None, "count": 0, "events": []}
+
+    query = {"bool": {"filter": [_time_filter(start_dt, end_dt), basis]}}
+    if alert_id.startswith("rule:"):
+        query["bool"]["must_not"] = [{"ids": {"values": [hit["_id"]]}}]
+    try:
+        res = client.search(index=RULE_INDEX, body={
+            "size": limit, "sort": [{"timestamp": {"order": "asc"}}], "query": query,
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
+    return {**result, "count": res["hits"]["total"]["value"],
+            "events": [_fmt_rule(h) for h in res["hits"]["hits"]]}
+
+
+def _agg_time(res, name):
+    """A min/max date aggregation's value as ISO, or None."""
+    v = ((res or {}).get("aggregations", {}).get(name) or {}).get("value")
+    return datetime.fromtimestamp(v / 1000, tz=timezone.utc).isoformat() if v else None
+
+
+@app.get("/api/entities/ip/{ip}")
+def ip_entity(ip: str, limit: int = 200):
+    """Everything the console has on one source IP, all time: its rule alerts
+    (any level) and AI detections, the accounts it targeted, when it was first
+    and last seen, and whether it is blocked — behind every clickable IP."""
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"'{ip}' is not a valid IP")
+
+    def _search(index, field, aggs):
+        try:
+            return client.search(index=index, body={
+                "size": limit,
+                "sort": [{"timestamp": {"order": "desc"}}],
+                "query": {"match_phrase": {field: ip}},
+                "aggs": {"first": {"min": {"field": "timestamp"}},
+                         "last": {"max": {"field": "timestamp"}}, **aggs},
+            })
+        except Exception:
+            return None            # index missing: the IP simply has no hits there
+
+    terms = lambda f: {"terms": {"field": f, "size": 20}}
+    r = _search(RULE_INDEX, "data.srcip", {"src_users": terms("data.srcuser"),
+                                            "dst_users": terms("data.dstuser"),
+                                            "agents": terms("agent.name")})
+    a = _search(AI_INDEX, "ai.top_srcips.ip", {})
+
+    hits = lambda res: (res or {}).get("hits", {}).get("hits", [])
+    total = lambda res: (res or {}).get("hits", {}).get("total", {}).get("value", 0)
+    buckets = lambda name: ((r or {}).get("aggregations", {}).get(name) or {}).get("buckets", [])
+
+    users = {}
+    for name in ("src_users", "dst_users"):
+        for b in buckets(name):
+            users[b["key"]] = users.get(b["key"], 0) + b["doc_count"]
+    seen = [t for t in (_agg_time(r, "first"), _agg_time(a, "first"),
+                        _agg_time(r, "last"), _agg_time(a, "last")) if t]
+
+    alerts = _merge_triage([_fmt_rule(h) for h in hits(r)] + [_fmt_ai(h) for h in hits(a)])
+    alerts.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+    return {
+        "ip": ip,
+        "first_seen": min(seen) if seen else None,
+        "last_seen": max(seen) if seen else None,
+        "rule_count": total(r),
+        "ai_count": total(a),
+        "users": [{"user": u, "count": n}
+                  for u, n in sorted(users.items(), key=lambda kv: -kv[1])],
+        "agents": [b["key"] for b in buckets("agents")],
+        "blocked": next((b for b in blocked_ips()["blocked"] if b["srcip"] == ip), None),
+        "alerts": alerts,
     }
 
 
@@ -428,6 +666,7 @@ class TriageUpdate(BaseModel):
     alert_ref: str | None = None
     alert_timestamp: str | None = None
     alert_source: str | None = None
+    alert_agent: str | None = None
 
 
 @app.get("/api/triage")
@@ -479,6 +718,7 @@ def triage_set(req: TriageUpdate):
         "alert_ref": req.alert_ref or existing.get("alert_ref"),
         "alert_timestamp": req.alert_timestamp or existing.get("alert_timestamp"),
         "alert_source": req.alert_source or existing.get("alert_source"),
+        "alert_agent": req.alert_agent or existing.get("alert_agent"),
         "created_at": existing.get("created_at", now),
         "updated_at": now,
         "resolved_at": resolved_at,
@@ -490,11 +730,13 @@ def triage_set(req: TriageUpdate):
 # ----------------------------------------------------------------- metrics
 
 @app.get("/api/metrics")
-def metrics(hours: int = 168):
+def metrics(start: str | None = None, end: str | None = None,
+            agent: str | None = None):
     """The rule-vs-AI comparison plus SOC workflow metrics (FP rate, MTTR).
     This endpoint is the live version of the Claim B evidence table."""
-    now = datetime.now(timezone.utc)
-    start = (now - timedelta(hours=hours)).isoformat()
+    start_dt, end_dt = _window(start, end, default_hours=168)
+    scope = [_time_filter(start_dt, end_dt), *_agent_filter(agent)]
+    attack = {"range": {"rule.level": {"gte": ATTACK_LEVEL}}}
 
     def _count(index, filters):
         try:
@@ -503,13 +745,10 @@ def metrics(hours: int = 168):
         except Exception:
             return 0
 
-    rule_total = _count(RULE_INDEX, [
-        {"range": {"timestamp": {"gte": start}}},
-        {"range": {"rule.level": {"gte": ATTACK_LEVEL}}},
-    ])
+    rule_total = _count(RULE_INDEX, [*scope, attack])
     # the all-levels volume, for the alert-fatigue comparison (R8)
-    rule_all = _count(RULE_INDEX, [{"range": {"timestamp": {"gte": start}}}])
-    ai_total = _count(AI_INDEX, [{"range": {"timestamp": {"gte": start}}}])
+    rule_all = _count(RULE_INDEX, scope)
+    ai_total = _count(AI_INDEX, scope)
 
     def _minutes(index, filters):
         try:
@@ -524,11 +763,8 @@ def metrics(hours: int = 168):
         except Exception:
             return set()
 
-    rule_min = _minutes(RULE_INDEX, [
-        {"range": {"timestamp": {"gte": start}}},
-        {"range": {"rule.level": {"gte": ATTACK_LEVEL}}},
-    ])
-    ai_min = _minutes(AI_INDEX, [{"range": {"timestamp": {"gte": start}}}])
+    rule_min = _minutes(RULE_INDEX, [*scope, attack])
+    ai_min = _minutes(AI_INDEX, scope)
 
     try:
         tres = client.search(index=TRIAGE_INDEX, body={"size": 2000})
@@ -536,27 +772,27 @@ def metrics(hours: int = 168):
     except Exception:
         tdocs = []
 
-    def _in_window(ts):
-        return bool(ts) and ts >= start
+    # triage records carry the alert's time (and, since alert_agent was added,
+    # its agent), so they can be scoped like the counts above. Under an agent
+    # filter, records written before alert_agent existed are left out.
+    def _in_scope(t):
+        ts = _parse_ts(t.get("alert_timestamp"))
+        return (ts is not None and start_dt <= ts <= end_dt
+                and (not agent or t.get("alert_agent") == agent))
 
-    fp = sum(1 for t in tdocs
-             if t.get("false_positive") and t.get("alert_source") == "ai"
-             and _in_window(t.get("alert_timestamp")))
+    tdocs = [t for t in tdocs if _in_scope(t)]
+    fp = sum(1 for t in tdocs if t.get("false_positive") and t.get("alert_source") == "ai")
 
     resolve_secs = []
     for t in tdocs:
-        if t.get("status") in ("resolved", "false_positive") \
-           and _in_window(t.get("alert_timestamp")):
-            try:
-                a = datetime.fromisoformat(t["alert_timestamp"].replace("Z", "+00:00"))
-                done = t.get("resolved_at") or t["updated_at"]   # pre-resolved_at records
-                r = datetime.fromisoformat(done.replace("Z", "+00:00"))
-                resolve_secs.append((r - a).total_seconds())
-            except Exception:
-                pass
+        if t.get("status") in ("resolved", "false_positive"):
+            done = _parse_ts(t.get("resolved_at") or t.get("updated_at"))  # pre-resolved_at records
+            if done:
+                resolve_secs.append((done - _parse_ts(t["alert_timestamp"])).total_seconds())
 
     return {
-        "window_hours": hours,
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
         "rule_alerts": rule_total,
         "rule_alerts_all_levels": rule_all,
         "ai_detections": ai_total,
@@ -588,8 +824,8 @@ def explain_alert(req: ExplainRequest):
     if not req.alert_id.startswith("ai:"):
         raise HTTPException(status_code=400,
                             detail="explanations are only generated for AI detections")
-    doc_id = req.alert_id.split(":", 1)[1]
-    hit = _get_detection(doc_id)
+    hit = _get_alert_hit(req.alert_id)
+    doc_id = hit["_id"]
 
     try:
         text, provider_used = explainer.explain(hit["_source"], provider=req.provider)
@@ -631,7 +867,7 @@ def explain_chat(req: ExplainChatRequest):
                             detail="chat is only available for AI detections")
     if len(req.messages) > 20:
         raise HTTPException(status_code=400, detail="thread too long")
-    hit = _get_detection(req.alert_id.split(":", 1)[1])
+    hit = _get_alert_hit(req.alert_id)
 
     thread = [{"role": m.role, "content": m.content} for m in req.messages]
     try:

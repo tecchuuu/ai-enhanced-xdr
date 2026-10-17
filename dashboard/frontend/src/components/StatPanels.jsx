@@ -8,9 +8,9 @@ import {
 import { usePalette } from "../theme/ThemeProvider";
 import Dot from "./Dot";
 
-// Fed by /api/metrics for the Overview's selected range, so these are the same
-// numbers the Metrics page shows for that range — one definition of each.
-export default function StatPanels({ metrics, hours }) {
+// Fed by /api/metrics for the header's range and agent, so these are the same
+// numbers the Metrics page shows for that scope — one definition of each.
+export default function StatPanels({ metrics }) {
   const p = usePalette();
   const ruleCount = metrics?.rule_alerts ?? "—";
   const allLevels = metrics?.rule_alerts_all_levels;
@@ -34,7 +34,7 @@ export default function StatPanels({ metrics, hours }) {
           />
           {allLevels != null && (
             <EuiText size="xs" color="subdued">
-              <p>{allLevels.toLocaleString()} at all levels, last {hours}.</p>
+              <p>{allLevels.toLocaleString()} at all levels in this range.</p>
             </EuiText>
           )}
         </EuiPanel>
@@ -72,7 +72,7 @@ export default function StatPanels({ metrics, hours }) {
           />
           <EuiText size="xs" color="subdued">
             <p>
-              Minutes, last {hours}, where the model flagged a window and no
+              Minutes in this range where the model flagged a window and no
               level 10+ rule fired — what signature detection missed.
             </p>
           </EuiText>

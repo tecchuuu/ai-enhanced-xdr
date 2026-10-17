@@ -10,7 +10,9 @@ import {
 } from "@elastic/eui";
 import { getRuleAlerts } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { scopeParams, scopeDeps } from "../lib/scope";
 import AlertsTable from "../components/AlertsTable";
+import FeedSearch from "../components/FeedSearch";
 
 // Wazuh severity tiers (severityName in badges.jsx). "All levels" is the
 // default, as in Wazuh's own events view.
@@ -22,15 +24,19 @@ const LEVELS = [
 ];
 const LIMIT = 200;
 
-export default function SecurityEvents() {
+// OpenSearch stops counting at 10,000 unless asked to track the exact total
+const fmtTotal = (n) => (n >= 10000 ? "10,000+" : n.toLocaleString());
+
+export default function SecurityEvents({ scope }) {
   const [minLevel, setMinLevel] = useState("0");
+  const [q, setQ] = useState("");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
   const refresh = usePolling(
     async (isCurrent) => {
       try {
-        const d = await getRuleAlerts(LIMIT, Number(minLevel));
+        const d = await getRuleAlerts({ limit: LIMIT, min_level: minLevel, q, ...scopeParams(scope) });
         if (!isCurrent()) return;
         setData(d);
         setError(null);
@@ -39,15 +45,21 @@ export default function SecurityEvents() {
       }
     },
     15000,
-    [minLevel]
+    [minLevel, q, ...scopeDeps(scope)]
   );
-
-  // OpenSearch stops counting at 10,000 unless asked to track the exact total
-  const total = data && (data.count >= 10000 ? "10,000+" : data.count.toLocaleString());
 
   return (
     <EuiPanel hasBorder>
-      <EuiFlexGroup alignItems="center" justifyContent="spaceBetween" responsive={false}>
+      <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false} wrap>
+        <EuiFlexItem style={{ minWidth: 260 }}>
+          <FeedSearch
+            placeholder="Search IP, user, rule ID or text, then Enter"
+            onSearch={(v) => {
+              setQ(v);
+              setData(null);
+            }}
+          />
+        </EuiFlexItem>
         <EuiFlexItem grow={false}>
           <EuiButtonGroup
             legend="Minimum rule level"
@@ -63,7 +75,7 @@ export default function SecurityEvents() {
         {data && (
           <EuiFlexItem grow={false}>
             <EuiText size="xs" color="subdued">
-              Latest {data.alerts.length} of {total}
+              Latest {data.alerts.length} of {fmtTotal(data.count)}
             </EuiText>
           </EuiFlexItem>
         )}

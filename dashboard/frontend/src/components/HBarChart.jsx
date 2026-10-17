@@ -16,8 +16,17 @@ import {
 import { useTheme, useChartTheme } from "../theme/ThemeProvider";
 
 // A single measure across categories (top IPs, detection categories): one hue,
-// magnitude by bar length. `data` is [{label, count}].
-export default function HBarChart({ title, description, data, seriesName, color, empty }) {
+// magnitude by bar length. `data` is [{label, count}]; onBarClick(label) makes
+// the bars a drill-down (the top-IPs chart opens the IP pivot).
+export default function HBarChart({
+  title,
+  description,
+  data,
+  seriesName,
+  color,
+  empty,
+  onBarClick,
+}) {
   const { baseTheme } = useTheme();
   const theme = useChartTheme();
 
@@ -35,7 +44,14 @@ export default function HBarChart({ title, description, data, seriesName, color,
       <div style={{ height: 260 }}>
         {data?.length ? (
           <Chart>
-            <Settings baseTheme={baseTheme} theme={theme} rotation={90} />
+            <Settings
+              baseTheme={baseTheme}
+              theme={theme}
+              rotation={90}
+              onElementClick={
+                onBarClick ? ([[geometry]]) => onBarClick(geometry.datum.label) : undefined
+              }
+            />
             <BarSeries
               id="bars"
               name={seriesName}

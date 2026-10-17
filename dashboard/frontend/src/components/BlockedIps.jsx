@@ -11,12 +11,15 @@ import {
   EuiCallOut,
   EuiBadge,
   EuiToolTip,
+  EuiLink,
 } from "@elastic/eui";
 import { getBlockedIps, unblockIp } from "../api";
 import { usePolling } from "../lib/usePolling";
 import { fmtTime } from "../lib/format";
+import { useOpenIp } from "../lib/ipContext";
 
 export default function BlockedIps() {
+  const openIp = useOpenIp();
   const [blocked, setBlocked] = useState(null);
   const [target, setTarget] = useState(null); // row pending unblock
   const [busy, setBusy] = useState(false);
@@ -55,7 +58,12 @@ export default function BlockedIps() {
   };
 
   const columns = [
-    { field: "srcip", name: "IP", width: "140px" },
+    {
+      field: "srcip",
+      name: "IP",
+      width: "140px",
+      render: (ip) => <EuiLink onClick={() => openIp(ip)}>{ip}</EuiLink>,
+    },
     { field: "agent_id", name: "Agent", width: "90px" },
     { field: "since", name: "Blocked since", render: fmtTime, width: "180px" },
     { field: "alert_ref", name: "Triggered by", truncateText: true },

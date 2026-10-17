@@ -7,7 +7,7 @@ import {
   EuiTitle,
   EuiSpacer,
   EuiDescriptionList,
-  EuiCodeBlock,
+  EuiLink,
   EuiText,
   EuiButton,
   EuiButtonEmpty,
@@ -22,8 +22,11 @@ import {
 } from "@elastic/eui";
 import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
 import { setTriage } from "../api";
+import { useOpenIp } from "../lib/ipContext";
 import BlockIpModal from "./BlockIpModal";
 import ExplainPanel from "./ExplainPanel";
+import RelatedEvents from "./RelatedEvents";
+import RawDocument from "./RawDocument";
 
 const STATUS_OPTIONS = TRIAGE_STATES.map((s) => ({
   id: s,
@@ -31,6 +34,7 @@ const STATUS_OPTIONS = TRIAGE_STATES.map((s) => ({
 }));
 
 export default function AlertFlyout({ alert, onClose, onRefresh }) {
+  const openIp = useOpenIp();
   const [blocking, setBlocking] = useState(false);
   const [status, setStatus] = useState("new");
   const [assignee, setAssignee] = useState("");
@@ -66,6 +70,7 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
         alertRef: `${alert.rule_id ?? "?"} — ${alert.description ?? ""}`,
         alertTimestamp: alert.timestamp,
         alertSource: alert.source,
+        alertAgent: alert.agent,
       });
       setStatus(nextStatus);
       setSaved(true);
@@ -86,8 +91,11 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
     { title: "Triage", description: <TriageBadge status={alert.triage_status} /> },
   ];
 
-  if (alert.srcip) items.push({ title: "Source IP", description: alert.srcip });
+  const ipLink = (ip) => <EuiLink onClick={() => openIp(ip)}>{ip}</EuiLink>;
+
+  if (alert.srcip) items.push({ title: "Source IP", description: ipLink(alert.srcip) });
   if (alert.srcuser) items.push({ title: "Source user", description: alert.srcuser });
+  if (alert.dstuser) items.push({ title: "Target user", description: alert.dstuser });
   if (alert.category) items.push({ title: "Category", description: alert.category });
   if (alert.mitre) items.push({ title: "MITRE ATT&CK", description: alert.mitre });
 
@@ -125,7 +133,12 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
     if (alert.top_srcips?.length) {
       items.push({
         title: "Top source IPs",
-        description: alert.top_srcips.map((t) => `${t.ip} (${t.count})`).join(", "),
+        description: alert.top_srcips.map((t, i) => (
+          <span key={t.ip}>
+            {i > 0 && ", "}
+            {ipLink(t.ip)} ({t.count})
+          </span>
+        )),
       });
     }
   }
@@ -221,13 +234,9 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
         <EuiSpacer />
         <EuiDescriptionList type="column" listItems={items} compressed />
         <EuiSpacer />
-        <EuiTitle size="xxs">
-          <h3>Raw document</h3>
-        </EuiTitle>
-        <EuiSpacer size="s" />
-        <EuiCodeBlock language="json" fontSize="s" paddingSize="s" isCopyable>
-          {JSON.stringify(alert, null, 2)}
-        </EuiCodeBlock>
+        <RelatedEvents alert={alert} />
+        <EuiSpacer />
+        <RawDocument key={alert.id} alertId={alert.id} />
       </EuiFlyoutBody>
       {alert.srcip && (
         <EuiFlyoutFooter>

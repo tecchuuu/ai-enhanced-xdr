@@ -5,21 +5,15 @@ import {
   EuiStat,
   EuiFlexGroup,
   EuiFlexItem,
-  EuiButtonGroup,
   EuiText,
   EuiTitle,
   EuiCallOut,
 } from "@elastic/eui";
 import { getMetrics } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { scopeParams, scopeDeps } from "../lib/scope";
 import { usePalette } from "../theme/ThemeProvider";
 import Dot from "../components/Dot";
-
-const RANGES = [
-  { id: "24", label: "24h" },
-  { id: "168", label: "7d" },
-  { id: "720", label: "30d" },
-];
 
 const fmtDuration = (secs) => {
   if (secs == null) return "—";
@@ -28,16 +22,15 @@ const fmtDuration = (secs) => {
   return `${(secs / 3600).toFixed(1)}h`;
 };
 
-export default function Metrics() {
+export default function Metrics({ scope }) {
   const p = usePalette();
-  const [rangeId, setRangeId] = useState("168");
   const [m, setM] = useState(null);
   const [error, setError] = useState(null);
 
   usePolling(
     async (isCurrent) => {
       try {
-        const d = await getMetrics(Number(rangeId));
+        const d = await getMetrics(scopeParams(scope));
         if (!isCurrent()) return;
         setM(d);
         setError(null);
@@ -46,7 +39,7 @@ export default function Metrics() {
       }
     },
     30000,
-    [rangeId]
+    scopeDeps(scope)
   );
 
   const o = m?.overlap_minutes ?? {};
@@ -74,18 +67,6 @@ export default function Metrics() {
           triage on the AI detections.
         </p>
       </EuiText>
-      <EuiSpacer size="s" />
-      <EuiFlexGroup justifyContent="flexEnd" responsive={false}>
-        <EuiFlexItem grow={false}>
-          <EuiButtonGroup
-            legend="Time range"
-            options={RANGES}
-            idSelected={rangeId}
-            onChange={setRangeId}
-            buttonSize="compressed"
-          />
-        </EuiFlexItem>
-      </EuiFlexGroup>
       <EuiSpacer size="s" />
 
       {error && (
