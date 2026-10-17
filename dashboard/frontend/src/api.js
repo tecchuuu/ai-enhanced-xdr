@@ -46,6 +46,7 @@ export const getRelated = (alertId) =>
   fetchJson(`/api/alerts/related${query({ alert_id: alertId })}`);
 export const getIpEntity = (ip) => fetchJson(`/api/entities/ip/${encodeURIComponent(ip)}`);
 
+export const getPipelineStatus = () => fetchJson("/api/pipeline/status");
 export const getAgents = () => fetchJson("/api/agents");
 export const getResponseLog = (limit = 100) => fetchJson(`/api/response/log?limit=${limit}`);
 export const getBlockedIps = () => fetchJson("/api/response/blocked");

@@ -6,6 +6,7 @@ import { scopeParams, scopeDeps } from "../lib/scope";
 import { useOpenIp } from "../lib/ipContext";
 import { usePalette } from "../theme/ThemeProvider";
 import StatPanels from "../components/StatPanels";
+import PipelineNotice from "../components/PipelineNotice";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
 import HBarChart from "../components/HBarChart";
@@ -50,6 +51,7 @@ export default function Overview({ scope }) {
 
   return (
     <>
+      <PipelineNotice />
       <StatPanels metrics={metrics} />
       <EuiSpacer />
       <EuiFlexGroup>

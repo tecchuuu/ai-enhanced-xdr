@@ -7,6 +7,7 @@ import { usePalette } from "../theme/ThemeProvider";
 import AlertsTable from "../components/AlertsTable";
 import HBarChart from "../components/HBarChart";
 import FeedSearch from "../components/FeedSearch";
+import PipelineNotice from "../components/PipelineNotice";
 
 const LIMIT = 200;
 
@@ -48,6 +49,7 @@ export default function AiDetections({ scope }) {
 
   return (
     <>
+      <PipelineNotice />
       <HBarChart
         title="Detections by category"
         description="Heuristic post-classification of the detections below. The model flags the deviation; the category makes it triageable."

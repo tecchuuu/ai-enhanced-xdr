@@ -35,6 +35,9 @@ from kafka import KafkaConsumer
 from models import get_model
 from opensearchpy import OpenSearch, helpers
 
+from consumer_common import (ai_index, fit_evidence, heartbeat, note_agent,
+                             top_agent, window_features)
+
 # one credential source for the whole project: dashboard/.env (git-ignored)
 load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
 
@@ -49,7 +52,7 @@ SCORE_EVERY    = 60      # attempt scoring every N seconds
 MIN_WINDOWS    = 10      # don't score until we have this many windows (else meaningless)
 MAX_WINDOWS    = 120     # rolling buffer size (2h at 1-min windows)
 CONTAMINATION  = 0.15
-AI_INDEX       = f"ai-detections-{datetime.now(timezone.utc):%Y.%m.%d}"
+CONSUMER_NAME  = "web-detector"    # its status doc id in ai-pipeline-status
 
 FEATURES = ["request_count", "distinct_urls", "error_ratio",
             "not_found_count", "post_ratio", "requests_per_ip", "hour"]
@@ -86,11 +89,14 @@ os_client = OpenSearch(
 # window_key (epoch // WINDOW_SEC) -> accumulated stats
 windows = defaultdict(lambda: {"count": 0, "urls": Counter(), "ips": Counter(),
                                "methods": Counter(), "statuses": Counter(),
-                               "injection": False, "traversal": False})
+                               "injection": False, "traversal": False,
+                               "agents": Counter()})
 already_flagged = set()
 consumed = 0     # every Kafka message seen
 web_seen = 0     # of those, the ones that were web access events
 written  = 0
+STARTED_AT    = datetime.now(timezone.utc).isoformat()
+last_event_at = None     # wall-clock time the last web event was folded in
 
 
 def bye(*_):
@@ -104,6 +110,7 @@ signal.signal(signal.SIGINT, bye)
 
 def ingest(event):
     """Fold one Wazuh web event into its time window; return True if it was one."""
+    global last_event_at
     ts = event.get("timestamp")
     if not ts:
         return False
@@ -131,6 +138,8 @@ def ingest(event):
     w = windows[key]
     w["count"] += 1
     w["urls"][url] += 1
+    note_agent(w, event)
+    last_event_at = datetime.now(timezone.utc).isoformat()
 
     srcip = data.get("srcip")
     if srcip:
@@ -175,6 +184,7 @@ def build_frame():
             "traversal":       w["traversal"],
             "top_ips":         w["ips"].most_common(5),
             "top_urls":        w["urls"].most_common(5),
+            "agent":           top_agent(w["agents"]),
         })
     return pd.DataFrame(rows).sort_values("timestamp") if rows else pd.DataFrame()
 
@@ -210,6 +220,16 @@ def severity(score):
     return 7
 
 
+def beat(state, result):
+    """Report status to the dashboard's Pipeline page (see consumer_common)."""
+    heartbeat(os_client, CONSUMER_NAME, state=state, last_result=result,
+              model=_MODEL.label, lane="web", windows_buffered=len(windows),
+              min_windows=MIN_WINDOWS, events_seen=web_seen,
+              detections_written=written, last_event_at=last_event_at,
+              started_at=STARTED_AT, score_every_sec=SCORE_EVERY,
+              kafka_bootstrap=KAFKA_BOOTSTRAP, topic=TOPIC, index=ai_index())
+
+
 def score_and_write():
     """Fit IF over the rolling buffer and write newly flagged windows."""
     global written
@@ -217,23 +237,27 @@ def score_and_write():
     df = build_frame()
     if len(df) < MIN_WINDOWS:
         print(f"  [scorer] {len(df)}/{MIN_WINDOWS} windows — not enough to score yet")
+        beat("warming_up", f"{len(df)}/{MIN_WINDOWS} windows buffered — not enough to score yet")
         return
 
     X = df[FEATURES]
     # inference slot — model chosen by DETECTOR_MODEL (see models/ registry)
     df["flag"], df["score"] = _MODEL.fit_score(X, CONTAMINATION)
+    evidence = fit_evidence(df, FEATURES)
 
     hits = df[(df.flag == -1) & (~df.key.isin(already_flagged))]
     if hits.empty:
         print(f"  [scorer] {len(df)} windows scored — no new anomalies")
+        beat("scoring", f"{len(df)} windows scored — no new anomalies")
         return
 
+    index = ai_index()
     docs = []
     for _, r in hits.iterrows():
         already_flagged.add(r.key)
         category, mitre, label = categorize(r)
         docs.append({
-            "_index": AI_INDEX,
+            "_index": index,
             "_source": {
                 "timestamp": r.timestamp.isoformat(),
                 "source": "morpheus_ai",
@@ -257,13 +281,16 @@ def score_and_write():
                     "mitre":           mitre,
                     "top_srcips":      [{"ip": ip, "count": n} for ip, n in r.top_ips],
                     "top_urls":        [{"url": u, "count": n} for u, n in r.top_urls],
+                    # why it fired: this window vs the un-flagged ones, and the cutoff
+                    "features":        window_features(r, FEATURES),
+                    **evidence,
                 },
-                "agent": {"name": "ubuntu-vm"},
+                "agent": r.agent,
             },
         })
 
     helpers.bulk(os_client, docs)
-    os_client.indices.refresh(index=AI_INDEX)
+    os_client.indices.refresh(index=index)
     written += len(docs)
 
     print(f"  [scorer] {len(df)} windows scored — {len(docs)} NEW detection(s) written:")
@@ -271,6 +298,7 @@ def score_and_write():
         a = d["_source"]["ai"]
         print(f"      {d['_source']['timestamp']}  score={a['anomaly_score']}  "
               f"reqs={a['request_count']}  urls={a['distinct_urls']}  err={a['error_ratio']}")
+    beat("scoring", f"{len(df)} windows scored — {len(docs)} new detection(s)")
 
 
 def prune():
@@ -281,9 +309,10 @@ def prune():
 
 
 # ----------------------------------------------------------------- main loop
-print(f"Consuming '{TOPIC}' (web view) from {KAFKA_BOOTSTRAP} -> {_MODEL.label} -> {AI_INDEX}")
+print(f"Consuming '{TOPIC}' (web view) from {KAFKA_BOOTSTRAP} -> {_MODEL.label} -> {ai_index()}")
 print(f"Windows: {WINDOW_SEC}s | scoring every {SCORE_EVERY}s | "
       f"min {MIN_WINDOWS} windows | Ctrl-C to stop\n")
+beat("starting", "connected to Kafka, waiting for events")
 
 last_score = time.time()
 

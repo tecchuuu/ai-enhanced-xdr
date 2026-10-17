@@ -36,8 +36,9 @@ OLLAMA_MODEL   = os.environ.get("OLLAMA_MODEL", "gemma3:12b")
 # claude-opus-5 is the SDK default; claude-haiku-4-5 is plenty for a 2-sentence
 # explanation and ~5x cheaper — set ANTHROPIC_MODEL to switch.
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
-# consumers flag at roughly this score; used to tell the model outright whether
-# a detection is strong or borderline instead of making it compare negatives
+# Detections now carry the cutoff their own fit used (ai.threshold). This is the
+# fallback for ones written before that field existed: roughly where the
+# consumers flag. Either way the verdict is computed here, not left to the model.
 FLAG_THRESHOLD  = float(os.environ.get("FLAG_THRESHOLD", "-0.5"))
 
 SYSTEM_PROMPT = (
@@ -58,22 +59,39 @@ CHAT_SYSTEM = (
 
 
 # ----------------------------------------------------------------- prompt
-def _score_line(score):
+def _score_line(score, threshold=None):
     """State the score's relation to the threshold outright.
 
     Left to infer it, a small model reads "-0.71" against a "-0.5 threshold"
     and reports the detection as borderline — the sign flips the comparison and
     it gets it backwards (observed with gemma3:12b, R15). Computing the verdict
     here costs nothing and removes the only grounding error seen in testing.
+    `threshold` is the cutoff recorded by the fit that flagged the window.
     """
     if score is None:
         return "Anomaly score: unavailable"
-    margin = FLAG_THRESHOLD - score          # positive = past the threshold
-    verdict = (f"{margin:.2f} PAST the flag threshold of {FLAG_THRESHOLD} — a strong detection"
+    cutoff = FLAG_THRESHOLD if threshold is None else threshold
+    margin = cutoff - score                  # positive = past the threshold
+    verdict = (f"{margin:.2f} PAST the flag threshold of {cutoff} — a strong detection"
                if margin > 0.1 else
-               f"only {abs(margin):.2f} from the flag threshold of {FLAG_THRESHOLD} — borderline")
+               f"only {abs(margin):.2f} from the flag threshold of {cutoff} — borderline")
     return (f"Anomaly score: {score} (scale: more negative = more anomalous). "
             f"This score is {verdict}.")
+
+
+def _baseline_lines(ai):
+    """This window next to what the un-flagged windows looked like in the same
+    fit — the 'why' behind the score, so the model needn't guess what normal is."""
+    feats, base = ai.get("features") or {}, ai.get("baseline") or {}
+    lines = []
+    for name, value in feats.items():
+        b = base.get(name)
+        if b and name != "hour":
+            lines.append(f"  {name}: {value} (normal median {b['median']}, p95 {b['p95']})")
+    if not lines:
+        return []
+    n = ai.get("windows_scored")
+    return [f"This window vs the normal windows{f' (of {n} scored)' if n else ''}:", *lines]
 
 
 def _summarise(doc):
@@ -84,7 +102,7 @@ def _summarise(doc):
         f"Detection: {rule.get('description', 'anomalous behaviour')}",
         f"Heuristic category: {ai.get('category', 'unclassified')}"
         + (f" (MITRE {ai['mitre']})" if ai.get("mitre") else ""),
-        _score_line(ai.get("anomaly_score")),
+        _score_line(ai.get("anomaly_score"), ai.get("threshold")),
         f"Aggregation window: {ai.get('window', '60s')}",
         f"Time: {doc.get('timestamp')}",
     ]
@@ -110,6 +128,7 @@ def _summarise(doc):
     if ai.get("top_srcips"):
         lines.append("Top source IPs: "
                      + ", ".join(f"{i['ip']} ({i['count']})" for i in ai["top_srcips"]))
+    lines += _baseline_lines(ai)
     return "\n".join(lines)
 
 
@@ -287,3 +306,29 @@ def metadata(provider_used):
         "explained_by": provider_used,
         "explained_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def status():
+    """Provider, model, and whether it can answer right now — for the
+    dashboard's Pipeline page. Cheap: lists Ollama's models, never generates,
+    and never calls the hosted API (that would cost tokens on every poll)."""
+    if PROVIDER == "mock":
+        return {"provider": "mock", "model": None, "ok": True,
+                "detail": "template explanations, no model"}
+    if PROVIDER == "ollama":
+        try:
+            res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+            res.raise_for_status()
+            names = [m.get("name") for m in res.json().get("models", [])]
+        except Exception as e:
+            return {"provider": "ollama", "model": OLLAMA_MODEL, "ok": False,
+                    "detail": f"Ollama unreachable at {OLLAMA_URL} ({e})"}
+        pulled = OLLAMA_MODEL in names
+        return {"provider": "ollama", "model": OLLAMA_MODEL, "ok": pulled,
+                "detail": "model pulled" if pulled else f"{OLLAMA_MODEL} not pulled"}
+    if PROVIDER == "anthropic":
+        has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        return {"provider": "anthropic", "model": ANTHROPIC_MODEL, "ok": has_key,
+                "detail": "API key set" if has_key else "ANTHROPIC_API_KEY not set"}
+    return {"provider": PROVIDER, "model": None, "ok": False,
+            "detail": "unknown provider (expected mock, ollama or anthropic)"}

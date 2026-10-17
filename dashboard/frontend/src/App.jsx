@@ -25,6 +25,8 @@ import AiDetections from "./pages/AiDetections";
 import Metrics from "./pages/Metrics";
 import ResponseLog from "./pages/ResponseLog";
 import Agents from "./pages/Agents";
+import DetectionSplit from "./pages/DetectionSplit";
+import Pipeline from "./pages/Pipeline";
 
 const REFRESH_MS = 15000;
 
@@ -53,6 +55,14 @@ const PAGES = {
     component: AiDetections,
     scoped: true,
   },
+  split: {
+    title: "Detection split",
+    icon: "timeline",
+    description:
+      "Rule alerts and AI detections on one timeline, minute by minute — the minutes the ruleset stayed silent stand out.",
+    component: DetectionSplit,
+    scoped: true,
+  },
   metrics: {
     title: "Metrics",
     icon: "reportingApp",
@@ -73,13 +83,20 @@ const PAGES = {
     description: "Wazuh agents reporting to the manager, and their connection state.",
     component: Agents,
   },
+  pipeline: {
+    title: "Pipeline",
+    icon: "pipelineApp",
+    description:
+      "Whether each part of the detection pipeline is alive: OpenSearch, the Wazuh API, every detector, and the explainer.",
+    component: Pipeline,
+  },
 };
 
-// grouped so the nav reads as three jobs rather than six flat links
+// grouped so the nav reads as three jobs rather than a flat list of links
 const NAV_GROUPS = [
   { id: "grp-detections", name: "Detections", pages: ["overview", "events", "ai"] },
-  { id: "grp-analysis", name: "Analysis", pages: ["metrics", "responses"] },
-  { id: "grp-system", name: "System", pages: ["agents"] },
+  { id: "grp-analysis", name: "Analysis", pages: ["split", "metrics", "responses"] },
+  { id: "grp-system", name: "System", pages: ["pipeline", "agents"] },
 ];
 
 export default function App() {

@@ -94,13 +94,19 @@ export default function AlertsTable({
   ].filter(Boolean);
 
   if (showScore) {
-    columns.splice(4, 0, {
-      field: "score",
-      name: "Anomaly score",
-      sortable: true,
-      width: "120px",
-      render: (s) => (s != null ? s.toFixed(4) : "—"),
-    });
+    columns.splice(
+      4,
+      0,
+      {
+        field: "score",
+        name: "Anomaly score",
+        sortable: true,
+        width: "120px",
+        render: (s) => (s != null ? s.toFixed(4) : "—"),
+      },
+      // which occupant of the swappable inference slot produced it
+      { field: "model", name: "Model", sortable: true, width: "130px", render: (m) => m ?? "—" }
+    );
   }
 
   return (

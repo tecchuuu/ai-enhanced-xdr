@@ -1,6 +1,7 @@
 import ipaddress
 import os
 import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -89,6 +90,13 @@ def _fmt_ai(hit):
         "not_found_count": ai.get("not_found_count"),
         "post_ratio":      ai.get("post_ratio"),
         "top_urls":        ai.get("top_urls") or [],
+        # why it fired — written by the consumers since batch 4, absent on older
+        # detections: this window's features, the un-flagged windows' median/p95,
+        # and the score cutoff of the fit that flagged it
+        "features":        ai.get("features"),
+        "baseline":        ai.get("baseline"),
+        "threshold":       ai.get("threshold"),
+        "windows_scored":  ai.get("windows_scored"),
         "category":    ai.get("category"),
         "mitre":       ai.get("mitre"),
         "srcip":       top_ips[0]["ip"] if top_ips else None,
@@ -156,8 +164,7 @@ def _time_filter(start_dt, end_dt):
 
 
 def _optional_time_filter(start, end):
-    """Feeds are all-time unless a range is passed (the legacy split view
-    passes none)."""
+    """Feeds are all-time unless a range is passed; the console always passes one."""
     if not (start or end):
         return []
     return [_time_filter(*_window(start, end, default_hours=24))]
@@ -257,18 +264,6 @@ def rule_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
         "count": res["hits"]["total"]["value"],
         "alerts": _merge_triage([_fmt_rule(h) for h in res["hits"]["hits"]]),
     }
-
-@app.get("/api/stats")
-def stats():
-    """All-time totals for the legacy split view (dashboard.html). The console
-    reads /api/metrics instead, which is time-ranged."""
-    total = client.count(index=RULE_INDEX)["count"]
-    try:
-        ai_total = client.count(index=AI_INDEX)["count"]
-    except Exception:
-        ai_total = 0
-
-    return {"rule_alerts": total, "ai_alerts": ai_total}
 
 @app.get("/api/alerts/ai")
 def ai_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
@@ -790,6 +785,18 @@ def metrics(start: str | None = None, end: str | None = None,
             if done:
                 resolve_secs.append((done - _parse_ts(t["alert_timestamp"])).total_seconds())
 
+    # which model in the inference slot produced them — counted from _source,
+    # so it doesn't depend on how ai.model happens to be mapped
+    try:
+        mres = client.search(index=AI_INDEX, body={
+            "size": 10000, "_source": ["ai.model"],
+            "query": {"bool": {"filter": scope}},
+        })
+        by_model = Counter((h["_source"].get("ai") or {}).get("model") or "unknown"
+                           for h in mres["hits"]["hits"])
+    except Exception:
+        by_model = Counter()
+
     return {
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
@@ -806,6 +813,74 @@ def metrics(start: str | None = None, end: str | None = None,
         "mttr_seconds": round(sum(resolve_secs) / len(resolve_secs))
                         if resolve_secs else None,
         "triaged": len(tdocs),
+        "ai_by_model": [{"model": m, "count": n} for m, n in by_model.most_common()],
+    }
+
+
+# ----------------------------------------------------------------- pipeline health
+
+STATUS_INDEX = "ai-pipeline-status"   # one heartbeat doc per consumer (consumer_common.py)
+STALE_CYCLES = 3                       # missed scoring cycles before a consumer counts as stale
+
+
+def _latest_ts(index):
+    """Newest document timestamp in an index pattern, as ISO, or None."""
+    try:
+        res = client.search(index=index, body={
+            "size": 1, "sort": [{"timestamp": {"order": "desc"}}],
+            "_source": ["timestamp"],
+        })
+    except Exception:
+        return None
+    hits = res["hits"]["hits"]
+    ts = _parse_ts(hits[0]["_source"].get("timestamp")) if hits else None
+    return ts.isoformat() if ts else None
+
+
+@app.get("/api/pipeline/status")
+def pipeline_status():
+    """Is each part of the pipeline alive? OpenSearch, the Wazuh API, every
+    detection consumer's last heartbeat, how fresh the data is, and the
+    explainer — so a quiet console can be told apart from a broken pipeline."""
+    now = datetime.now(timezone.utc)
+
+    try:
+        h = client.cluster.health()
+        opensearch = {"ok": h["status"] in ("green", "yellow"), "status": h["status"],
+                      "cluster": h.get("cluster_name")}
+    except Exception as e:
+        opensearch = {"ok": False, "status": "unreachable", "detail": str(e)}
+
+    try:
+        endpoints = [a for a in wazuh_api.get_agents() if a.get("id") != "000"]
+        wazuh = {"ok": True, "agents_total": len(endpoints),
+                 "agents_active": sum(a.get("status") == "active" for a in endpoints)}
+    except Exception as e:
+        wazuh = {"ok": False, "detail": str(e)}
+
+    consumers = []
+    try:
+        res = client.search(index=STATUS_INDEX, body={"size": 50})
+        for hit in res["hits"]["hits"]:
+            s = hit["_source"]
+            last = _parse_ts(s.get("last_heartbeat"))
+            age = (now - last).total_seconds() if last else None
+            consumers.append({
+                **s,
+                "age_seconds": round(age) if age is not None else None,
+                "stale": age is None or age > STALE_CYCLES * (s.get("score_every_sec") or 60),
+            })
+    except Exception:
+        pass                            # index absent: no consumer has reported yet
+
+    return {
+        "checked_at": now.isoformat(),
+        "opensearch": opensearch,
+        "wazuh_api": wazuh,
+        "consumers": sorted(consumers, key=lambda c: c.get("consumer", "")),
+        "data": {"last_rule_alert": _latest_ts(RULE_INDEX),
+                 "last_ai_detection": _latest_ts(AI_INDEX)},
+        "explainer": explainer.status(),
     }
 
 

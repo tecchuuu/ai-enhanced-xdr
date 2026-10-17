@@ -27,6 +27,7 @@ import BlockIpModal from "./BlockIpModal";
 import ExplainPanel from "./ExplainPanel";
 import RelatedEvents from "./RelatedEvents";
 import RawDocument from "./RawDocument";
+import WhyItFired from "./WhyItFired";
 
 const STATUS_OPTIONS = TRIAGE_STATES.map((s) => ({
   id: s,
@@ -226,6 +227,8 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
 
         {alert.source === "ai" && (
           <>
+            <EuiSpacer />
+            <WhyItFired alert={alert} />
             <EuiSpacer />
             <ExplainPanel alert={alert} onRefresh={onRefresh} />
           </>

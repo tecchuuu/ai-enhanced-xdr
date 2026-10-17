@@ -30,7 +30,7 @@ Endpoint → Wazuh Agent → Wazuh Manager → archives.json
 ```
 wazuh/          Wazuh manager/indexer/dashboard — Docker Compose + config
 ai-stack/       Kafka (KRaft mode) + streaming pipeline scripts
-dashboard/      FastAPI backend + SOC console (React + EUI) + legacy split view
+dashboard/      FastAPI backend + SOC console (React + EUI)
 scripts/        traffic generation, orchestration, ML experiments
 docs/           architecture notes, results log, failure log
 ```
@@ -85,15 +85,20 @@ npm run dev
 Console: `http://localhost:5173` — Wazuh-style UI (same EUI component library)
 with rule + AI alerts, a shared time range and agent filter, server-side search
 (IP, user, rule ID, text), time charts, threat categories, alert detail flyout
-with related events and the raw document, an IP pivot (every alert from an
-address, targeted accounts, block state — click any IP),
-per-alert triage (status / assignee / note / mark-false-positive), a **Metrics**
-page (live rule-vs-AI comparison, false-positive rate, MTTR), one-click IP
+with related events and the raw document, a **Why it fired** panel on AI
+detections (the window's features against the model's own baseline and score
+cutoff), an IP pivot (every alert from an address, targeted accounts, block
+state — click any IP),
+per-alert triage (status / assignee / note / mark-false-positive), a
+**Detection split** timeline (rule alerts and AI detections minute by minute,
+the AI-only minutes flagged), a **Metrics** page (live rule-vs-AI comparison,
+false-positive rate, MTTR, detections per model), one-click IP
 blocking via Wazuh Active Response with an unblock action and current-block
-view, audit-logged response history, and live agent status. Light and dark modes are
+view, audit-logged response history, live agent status, and a **Pipeline** page
+(OpenSearch, Wazuh API, each detector's heartbeat, explainer) so a quiet console
+can be told apart from a stopped detector. Light and dark modes are
 both selectable (header toggle, persisted); each has its own validated color
-steps in `src/theme/palette.js` rather than one being a flip of the other. The original
-detection-split demo view remains at `dashboard/dashboard.html`. Console
+steps in `src/theme/palette.js` rather than one being a flip of the other. Console
 internals and contracts: `docs/dashboard-build-notes.md`.
 
 ## Why this architecture

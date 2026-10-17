@@ -20,14 +20,18 @@ analyst act on it" story — not decoration.
 | **IP pivot** — everything on one source address, all time | `GET /api/entities/ip/{ip}` | `IpFlyout`, opened from any IP link or the top-IPs chart |
 | **Related events** — rule alerts around one alert | `GET /api/alerts/related` | panel in `AlertFlyout` |
 | **Raw document** — the stored `_source` behind an alert | `GET /api/alerts/doc` | accordion in `AlertFlyout` |
+| **Why it fired** — window features vs the fit's baseline, score vs cutoff | consumers write `ai.features` / `ai.baseline` / `ai.threshold` / `ai.windows_scored` (`ai-stack/pipeline/consumer_common.py`) | `WhyItFired` panel in the AI alert flyout; the explainer prompt uses the same fields |
+| **Pipeline health** — is each part alive | consumers heartbeat into `ai-pipeline-status`; `GET /api/pipeline/status` | **Pipeline** page; `PipelineNotice` on Overview / AI detections |
+| **Detection split** — rule vs AI, minute by minute | `/api/alerts/combined` (scoped) | **Detection split** page (replaces `dashboard.html`) |
+| **Model** — which inference-slot occupant flagged it | `ai.model` (always written); `ai_by_model` in `/api/metrics` | Model column on AI detections; by-model line on Metrics |
 
 ## Contracts
 
 ### Scope (`start`, `end`, `agent`)
 The header's date picker holds date-math strings (`now-24h`); the client
 resolves them to ISO at every fetch (`lib/scope.js`) so a relative range keeps
-sliding. Feeds without `start`/`end` are all-time (the legacy split view relies
-on this); charts and metrics default to the last 24h / 7d. `agent` is matched
+sliding. Feeds without `start`/`end` are all-time; charts and metrics default
+to the last 24h / 7d. `agent` is matched
 with `match_phrase` on `agent.name`, which works for the keyword mapping in
 `wazuh-alerts-*` and the analyzed text in the dynamically mapped
 `ai-detections-*`. The histogram picks its bucket size from the range (≤ ~60
@@ -121,6 +125,35 @@ Provider = `EXPLAINER_PROVIDER` env var, overridable per call:
 The flyout shows the explanation for AI alerts with an "Explain this detection" /
 "Regenerate" button.
 
+### Detection evidence (`ai.*` on every new detection, both lanes)
+Written by `consumer_common.fit_evidence()` from the fit that flagged the window:
+- `features` — the window's own feature vector, as the model saw it.
+- `baseline` — per feature, `{median, p95}` over the windows in the same fit the
+  model did **not** flag: what normal looked like at scoring time.
+- `threshold` — the least anomalous score flagged in that fit. The models flag
+  a fixed share of windows (contamination 0.15), not a fixed score, so the
+  cutoff moves with the rolling buffer; this is the real one, replacing the
+  explainer's old `-0.5` guess (`FLAG_THRESHOLD` is now only the fallback for
+  older detections).
+- `windows_scored` — how many windows that fit saw.
+
+`agent` is now the most common agent among the window's events (`id` + `name`)
+instead of a hardcoded `ubuntu-vm`, and the index name is computed per write so
+a consumer running past midnight rolls over to the new day's index.
+
+### Pipeline status (`ai-pipeline-status`, doc `_id` = consumer name)
+Each consumer overwrites its doc every scoring cycle (60s) and once at start:
+`state` (`starting` / `warming_up` / `scoring`), `last_result`, `model`,
+`lane`, `windows_buffered` / `min_windows`, `events_seen`,
+`detections_written`, `last_event_at`, `last_heartbeat`, `started_at`,
+`kafka_bootstrap`, `topic`, `index`, `score_every_sec`. A failed write is
+logged, never raised. `/api/pipeline/status` marks a consumer `stale` after 3
+missed cycles and adds OpenSearch cluster health, Wazuh API reachability +
+active agents, newest rule alert / AI detection, and `explainer.status()`
+(lists Ollama's models; never generates or calls the hosted API). The Overview
+notice ignores a consumer silent for over a day — treated as deliberately
+stopped (the web lane isn't always run); the Pipeline page still shows it.
+
 ## Known limitations (state these in the report)
 
 1. **Unblock is best-effort.** Wazuh's manager API has no documented "undo
@@ -160,6 +193,12 @@ The flyout shows the explanation for AI alerts with an "Explain this detection" 
 - [ ] Agent selector narrows both feeds and the Overview tiles.
 - [ ] Related events on a real AI detection list the sshd alerts from its IP;
       the IP pivot's first/last seen and accounts look right for the attacker.
+- [ ] Restart the consumers (`start_all.sh`) → the **Pipeline** page shows both
+      detectors `warming up`, then `running`; stop one → it turns `silent`
+      within ~3 minutes and Overview says so.
+- [ ] The next real AI detection has a **Why it fired** table with sensible
+      medians, its real agent name, and an explanation (ollama) that quotes the
+      recorded cutoff.
 - [x] Frontend builds: `npm ci && npm run build` passes (Node 24, Vite 8),
       `oxlint` clean apart from the fast-refresh notices in `badges.jsx` /
       `ThemeProvider.jsx`.

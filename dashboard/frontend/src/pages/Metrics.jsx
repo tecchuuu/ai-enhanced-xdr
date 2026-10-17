@@ -116,6 +116,14 @@ export default function Metrics({ scope }) {
               <strong>{m?.triaged ?? 0} detections triaged</strong> — FP rate and MTTR are only
               meaningful once analysts have worked the queue.
             </li>
+            {m?.ai_by_model?.length > 0 && (
+              <li>
+                <strong>By model:</strong>{" "}
+                {m.ai_by_model.map((x) => `${x.model} ${x.count}`).join(" · ")} — which
+                occupant of the swappable inference slot produced the detections in this
+                range.
+              </li>
+            )}
           </ul>
         </EuiText>
       </EuiPanel>
