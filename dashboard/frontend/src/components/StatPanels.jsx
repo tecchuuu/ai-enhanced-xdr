@@ -6,26 +6,7 @@ import {
   EuiText,
 } from "@elastic/eui";
 import { usePalette } from "../theme/ThemeProvider";
-
-// Numbers wear text ink; a small colored dot beside the label carries identity.
-// Painting four large figures in saturated series colors makes none of them
-// stand out — the color has to be scarce to mean anything.
-function Dot({ color }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: color,
-        marginRight: 6,
-        verticalAlign: "middle",
-      }}
-    />
-  );
-}
+import Dot from "./Dot";
 
 // Fed by /api/metrics for the Overview's selected range, so these are the same
 // numbers the Metrics page shows for that range — one definition of each.

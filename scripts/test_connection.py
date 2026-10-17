@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from opensearchpy import OpenSearch
 
-load_dotenv()
+# one credential source for the whole project: dashboard/.env (git-ignored)
+load_dotenv(Path(__file__).resolve().parents[1] / "dashboard" / ".env")
 
 client = OpenSearch(
     hosts=[{"host": os.environ.get("OS_HOST", "localhost"),

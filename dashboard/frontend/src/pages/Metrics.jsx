@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   EuiSpacer,
   EuiPanel,
@@ -11,31 +11,15 @@ import {
   EuiCallOut,
 } from "@elastic/eui";
 import { getMetrics } from "../api";
-import CategoryBreakdown from "../components/CategoryBreakdown";
+import { usePolling } from "../lib/usePolling";
 import { usePalette } from "../theme/ThemeProvider";
+import Dot from "../components/Dot";
 
 const RANGES = [
   { id: "24", label: "24h" },
   { id: "168", label: "7d" },
   { id: "720", label: "30d" },
 ];
-
-function Dot({ color }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: color,
-        marginRight: 6,
-        verticalAlign: "middle",
-      }}
-    />
-  );
-}
 
 const fmtDuration = (secs) => {
   if (secs == null) return "—";
@@ -50,25 +34,20 @@ export default function Metrics() {
   const [m, setM] = useState(null);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      getMetrics(Number(rangeId))
-        .then((d) => {
-          if (!alive) return;
-          setM(d);
-          setError(null);
-        })
-        .catch((e) => {
-          if (alive) setError(String(e.message ?? e));
-        });
-    load();
-    const t = setInterval(load, 30000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [rangeId]);
+  usePolling(
+    async (isCurrent) => {
+      try {
+        const d = await getMetrics(Number(rangeId));
+        if (!isCurrent()) return;
+        setM(d);
+        setError(null);
+      } catch (e) {
+        if (isCurrent()) setError(String(e.message ?? e));
+      }
+    },
+    30000,
+    [rangeId]
+  );
 
   const o = m?.overlap_minutes ?? {};
 
@@ -159,9 +138,6 @@ export default function Metrics() {
           </ul>
         </EuiText>
       </EuiPanel>
-
-      <EuiSpacer />
-      <CategoryBreakdown categories={m?.by_category} hours={RANGES.find((r) => r.id === rangeId)?.label} />
     </>
   );
 }

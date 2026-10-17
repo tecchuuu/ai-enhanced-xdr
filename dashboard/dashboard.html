@@ -182,8 +182,8 @@ async function load(){
     let modelOnly = 0;
 
     if(!keys.length){
-      tl.innerHTML = '<div class="empty">No detections yet. Generate auth activity, then run '
-                   + '<code>writeback.py</code>.</div>';
+      tl.innerHTML = '<div class="empty">No detections yet. Start the pipeline with '
+                   + '<code>ai-stack/start_all.sh</code> and generate auth activity.</div>';
     } else {
       tl.innerHTML = keys.map(k => {
         const b = buckets.get(k);

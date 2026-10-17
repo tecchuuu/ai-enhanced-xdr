@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
   EuiPanel,
   EuiBasicTable,
@@ -13,8 +13,8 @@ import {
   EuiToolTip,
 } from "@elastic/eui";
 import { getBlockedIps, unblockIp } from "../api";
-
-const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
+import { usePolling } from "../lib/usePolling";
+import { fmtTime } from "../lib/format";
 
 export default function BlockedIps() {
   const [blocked, setBlocked] = useState(null);
@@ -23,17 +23,14 @@ export default function BlockedIps() {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null); // unblock Wazuh didn't accept
 
-  const load = useCallback(() => {
-    getBlockedIps()
-      .then(({ blocked }) => setBlocked(blocked))
-      .catch(() => setBlocked([]));
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
-  }, [load]);
+  const load = usePolling(async (isCurrent) => {
+    try {
+      const { blocked } = await getBlockedIps();
+      if (isCurrent()) setBlocked(blocked);
+    } catch {
+      if (isCurrent()) setBlocked([]);
+    }
+  }, 15000);
 
   const confirmUnblock = async () => {
     setBusy(true);

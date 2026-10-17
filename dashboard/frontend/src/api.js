@@ -25,13 +25,10 @@ export const getCombined = (limit = 200) => fetchJson(`/api/alerts/combined?limi
 export const getHistogram = (hours = 24, interval = "30m") =>
   fetchJson(`/api/alerts/histogram?hours=${hours}&interval=${interval}`);
 export const getTopSrcIps = (hours = 24) => fetchJson(`/api/alerts/top_srcips?hours=${hours}`);
-export const getByCategory = (hours = 168) =>
-  fetchJson(`/api/alerts/by_category?hours=${hours}`);
 export const getAgents = () => fetchJson("/api/agents");
 export const getResponseLog = (limit = 100) => fetchJson(`/api/response/log?limit=${limit}`);
 export const getBlockedIps = () => fetchJson("/api/response/blocked");
 export const getMetrics = (hours = 168) => fetchJson(`/api/metrics?hours=${hours}`);
-export const getTriage = (limit = 500) => fetchJson(`/api/triage?limit=${limit}`);
 
 export function setTriage({ alertId, status, assignee, note, falsePositive, alertRef, alertTimestamp, alertSource }) {
   return postJson("/api/triage", {

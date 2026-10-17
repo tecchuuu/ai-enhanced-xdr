@@ -1,14 +1,7 @@
-import { useEffect, useState } from "react";
-import {
-  EuiPanel,
-  EuiInMemoryTable,
-  EuiHealth,
-  EuiTitle,
-  EuiText,
-  EuiSpacer,
-  EuiCallOut,
-} from "@elastic/eui";
+import { useState } from "react";
+import { EuiPanel, EuiInMemoryTable, EuiHealth, EuiCallOut } from "@elastic/eui";
 import { getAgents } from "../api";
+import { usePolling } from "../lib/usePolling";
 
 const STATUS_COLOR = {
   active: "success",
@@ -28,18 +21,16 @@ export default function Agents() {
   const [agents, setAgents] = useState(null);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const load = () =>
-      getAgents()
-        .then(({ agents }) => {
-          setAgents(agents);
-          setError(null);
-        })
-        .catch((e) => setError(String(e.message ?? e)));
-    load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
-  }, []);
+  usePolling(async (isCurrent) => {
+    try {
+      const { agents } = await getAgents();
+      if (!isCurrent()) return;
+      setAgents(agents);
+      setError(null);
+    } catch (e) {
+      if (isCurrent()) setError(String(e.message ?? e));
+    }
+  }, 30000);
 
   const columns = [
     { field: "id", name: "ID", width: "60px", sortable: true },
@@ -59,13 +50,6 @@ export default function Agents() {
 
   return (
     <EuiPanel hasBorder>
-      <EuiTitle size="xs">
-        <h2>Monitored endpoints</h2>
-      </EuiTitle>
-      <EuiText size="s" color="subdued">
-        <p>Live inventory from the Wazuh manager API. Refreshes every 30s.</p>
-      </EuiText>
-      <EuiSpacer size="s" />
       {error ? (
         <EuiCallOut title={`Wazuh API error: ${error}`} color="danger" iconType="warning" />
       ) : (

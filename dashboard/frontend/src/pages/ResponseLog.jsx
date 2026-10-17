@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   EuiPanel,
   EuiInMemoryTable,
@@ -9,6 +9,8 @@ import {
   EuiEmptyPrompt,
 } from "@elastic/eui";
 import { getResponseLog } from "../api";
+import { usePolling } from "../lib/usePolling";
+import { fmtTime } from "../lib/format";
 import BlockedIps from "../components/BlockedIps";
 
 const STATUS_COLOR = {
@@ -17,18 +19,18 @@ const STATUS_COLOR = {
   refused: "warning",
   failed: "danger",
 };
-const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
 
 export default function ResponseLog() {
   const [actions, setActions] = useState(null);
 
-  useEffect(() => {
-    const load = () =>
-      getResponseLog().then(({ actions }) => setActions(actions)).catch(() => {});
-    load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
-  }, []);
+  usePolling(async (isCurrent) => {
+    try {
+      const { actions } = await getResponseLog();
+      if (isCurrent()) setActions(actions);
+    } catch {
+      /* header health indicator already reports API problems */
+    }
+  }, 15000);
 
   const columns = [
     { field: "timestamp", name: "Time", render: fmtTime, sortable: true, width: "170px" },

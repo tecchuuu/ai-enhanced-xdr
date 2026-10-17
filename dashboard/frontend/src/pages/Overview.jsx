@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   EuiSpacer,
   EuiTitle,
@@ -8,12 +8,13 @@ import {
   EuiFlexItem,
   EuiButtonGroup,
 } from "@elastic/eui";
-import { getHistogram, getTopSrcIps, getByCategory, getMetrics } from "../api";
+import { getHistogram, getTopSrcIps, getMetrics, getCombined } from "../api";
+import { usePolling } from "../lib/usePolling";
+import { usePalette } from "../theme/ThemeProvider";
 import StatPanels from "../components/StatPanels";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
-import TopSrcIps from "../components/TopSrcIps";
-import CategoryBreakdown from "../components/CategoryBreakdown";
+import HBarChart from "../components/HBarChart";
 
 const RANGES = [
   { id: "6", label: "6h", interval: "10m" },
@@ -22,43 +23,44 @@ const RANGES = [
   { id: "720", label: "30d", interval: "12h" },
 ];
 
-export default function Overview({ combined, loading, onRefresh }) {
+export default function Overview() {
+  const p = usePalette();
   const [rangeId, setRangeId] = useState("24");
   const [metrics, setMetrics] = useState(null);
   const [buckets, setBuckets] = useState(null);
   const [ips, setIps] = useState(null);
-  const [categories, setCategories] = useState(null);
+  const [recent, setRecent] = useState(null);
 
   const range = RANGES.find((r) => r.id === rangeId);
 
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
+  usePolling(
+    async (isCurrent) => {
       try {
-        const [m, h, t, c] = await Promise.all([
+        const [m, h, t] = await Promise.all([
           getMetrics(Number(range.id)),
           getHistogram(Number(range.id), range.interval),
           getTopSrcIps(Number(range.id)),
-          getByCategory(Number(range.id)),
         ]);
-        if (!alive) return;
+        if (!isCurrent()) return;
         setMetrics(m);
         setBuckets(h.buckets);
-        setIps(t.ips);
-        setCategories(c.categories);
+        setIps(t.ips.map((i) => ({ label: i.ip, count: i.count })));
       } catch {
         /* header health indicator already reports API problems */
       }
-    };
-    load();
-    const t = setInterval(load, 30000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [range]);
+    },
+    30000,
+    [rangeId]
+  );
 
-  const recent = (combined?.alerts ?? []).slice(0, 10);
+  const refreshRecent = usePolling(async (isCurrent) => {
+    try {
+      const c = await getCombined(10);
+      if (isCurrent()) setRecent(c.alerts);
+    } catch {
+      /* as above */
+    }
+  }, 15000);
 
   return (
     <>
@@ -81,21 +83,33 @@ export default function Overview({ combined, loading, onRefresh }) {
           <AlertsOverTime buckets={buckets} hours={range.label} />
         </EuiFlexItem>
         <EuiFlexItem grow={1}>
-          <TopSrcIps ips={ips} hours={range.label} />
+          <HBarChart
+            title="Top source IPs"
+            description={`Most active alert sources, last ${range.label}.`}
+            data={ips}
+            seriesName="Alerts"
+            color={p.single}
+            empty={{
+              icon: "globe",
+              title: "No source IPs yet",
+              body: `No alerts carrying a source IP in the last ${range.label}. Attacks from another host will populate this; loopback traffic will not.`,
+            }}
+          />
         </EuiFlexItem>
       </EuiFlexGroup>
-      <EuiSpacer />
-      <CategoryBreakdown categories={categories} hours={range.label} />
       <EuiSpacer />
       <EuiPanel hasBorder>
         <EuiTitle size="xs">
           <h2>Latest detections</h2>
         </EuiTitle>
         <EuiText size="s" color="subdued">
-          <p>Most recent events from both streams. Full feed under Security events.</p>
+          <p>
+            Most recent from both streams (rules at level 10+). Full feeds under Security
+            events and AI detections.
+          </p>
         </EuiText>
         <EuiSpacer size="s" />
-        <AlertsTable alerts={recent} loading={loading} onRefresh={onRefresh} />
+        <AlertsTable alerts={recent ?? []} loading={recent == null} onRefresh={refreshRecent} />
       </EuiPanel>
     </>
   );

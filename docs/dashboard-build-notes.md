@@ -13,7 +13,7 @@ analyst act on it" story — not decoration.
 |---|---|---|
 | **Alert triage** — status / assignee / note / false-positive per alert | `ai-alert-triage` index, `GET`/`POST /api/triage` | triage panel in `AlertFlyout`, triage column + filter in `AlertsTable` |
 | **Metrics** — live rule-vs-AI comparison, FP rate, MTTR | `GET /api/metrics` | new **Metrics** page |
-| **Category breakdown** — AI detections by heuristic category | `GET /api/alerts/by_category` | `CategoryBreakdown` component (Overview + Metrics) |
+| **Category breakdown** — AI detections by heuristic category | none — counted in the browser from the loaded detections, so it always matches the table | chart on the **AI detections** page |
 | **Blocked-IP management** — current block set + unblock | `GET /api/response/blocked`, `POST /api/response/unblock-ip` | `BlockedIps` component on the Response log page |
 
 ## Contracts
@@ -91,13 +91,9 @@ The flyout shows the explanation for AI alerts with an "Explain this detection" 
    and the IP stays in **Currently blocked**, flagged *unblock unconfirmed*, rather
    than being shown as unblocked — a persistent drop may need `iptables -D` on the
    agent or a custom delete AR. This is a Wazuh constraint, not a design gap.
-2. **`ai.category.keyword`** — the category aggregation assumes dynamic mapping
-   on `ai-detections-*`. If a later index template maps `ai.category` as a bare
-   keyword, change the agg field in `_category_agg()`. Falls back to empty on
-   error, so nothing breaks.
-3. **Pre-August detections** lack `category` / `top_srcips` (pre-enrichment) —
-   the breakdown chart only reflects newer detections.
-4. **MTTR / FP rate are only meaningful once analysts work the queue** — with an
+2. **Pre-August detections** lack `category` / `top_srcips` (pre-enrichment) —
+   the breakdown chart lists them as "no category".
+3. **MTTR / FP rate are only meaningful once analysts work the queue** — with an
    empty `ai-alert-triage` index they read 0 / "—".
 
 ## To verify against a live stack
@@ -108,7 +104,6 @@ The flyout shows the explanation for AI alerts with an "Explain this detection" 
       after the 15s refresh (or immediately via the `onRefresh` path).
 - [ ] `/api/metrics` overlap math against a known scenario (fast brute force =
       high `both`; slow brute force = high `ai_only`).
-- [ ] `by_category` returns buckets (confirms the `.keyword` field assumption).
 - [ ] Block an IP from another host → it appears in **Currently blocked** →
       unblock → it leaves the list and a `unblock-ip` row lands in the audit log
       (or it stays, flagged *unblock unconfirmed*, if Wazuh rejects the delete).

@@ -28,12 +28,19 @@ client = OpenSearch(
     use_ssl=True, verify_certs=False, ssl_show_warn=False,
 )
 
+RULE_INDEX = "wazuh-alerts-4.x-*"
+AI_INDEX = "ai-detections-*"
+# Wazuh level at which a rule alert declares an attack — the rule side of every
+# rule-vs-AI comparison (combined feed, histogram, metrics) counts from here
+ATTACK_LEVEL = 10
+
+
 def _first(x):
     """Wazuh mitre fields are lists; take the first entry."""
     return x[0] if isinstance(x, list) and x else (x or None)
 
 
-def _fmt(hit):
+def _fmt_rule(hit):
     s = hit["_source"]
     rule = s.get("rule", {})
     mitre = rule.get("mitre", {})
@@ -54,6 +61,55 @@ def _fmt(hit):
     }
 
 
+def _fmt_ai(hit):
+    s = hit["_source"]
+    ai = s.get("ai", {})
+    top_ips = ai.get("top_srcips") or []
+    return {
+        "id":          f"ai:{hit['_id']}",
+        "timestamp":   s.get("timestamp"),
+        "rule_id":     s.get("rule", {}).get("id"),
+        "level":       s.get("rule", {}).get("level"),
+        "description": s.get("rule", {}).get("description"),
+        "agent":       s.get("agent", {}).get("name"),
+        "source":      "ai",
+        "model":       ai.get("model"),
+        "pipeline":    ai.get("pipeline"),
+        "window":      ai.get("window"),
+        "score":       ai.get("anomaly_score"),
+        "event_count": ai.get("event_count"),
+        "distinct_users": ai.get("distinct_users"),
+        "events_per_user": ai.get("events_per_user"),
+        # web lane (rule 100002) window features; absent on auth detections
+        "request_count":   ai.get("request_count"),
+        "distinct_urls":   ai.get("distinct_urls"),
+        "error_ratio":     ai.get("error_ratio"),
+        "not_found_count": ai.get("not_found_count"),
+        "post_ratio":      ai.get("post_ratio"),
+        "top_urls":        ai.get("top_urls") or [],
+        "category":    ai.get("category"),
+        "mitre":       ai.get("mitre"),
+        "srcip":       top_ips[0]["ip"] if top_ips else None,
+        "top_srcips":  top_ips,
+        "explanation": ai.get("explanation"),
+        "explained_by": ai.get("explained_by"),
+    }
+
+
+def _get_detection(doc_id):
+    """One ai-detections hit by _id, or an HTTPException the caller lets raise."""
+    try:
+        res = client.search(index=AI_INDEX, body={
+            "size": 1, "query": {"ids": {"values": [doc_id]}},
+        })
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
+    hits = res["hits"]["hits"]
+    if not hits:
+        raise HTTPException(status_code=404, detail="detection not found")
+    return hits[0]
+
+
 # ----------------------------------------------------------------- triage state
 # Analyst workflow state (status / assignee / note / false-positive flag) lives
 # in its own mutable index, keyed by the alert's stable id. Same pattern as the
@@ -63,14 +119,14 @@ TRIAGE_INDEX = "ai-alert-triage"
 TRIAGE_STATES = ("new", "investigating", "resolved", "false_positive")
 
 
-def _triage_map(alert_ids=None):
-    """{alert_id: triage_doc} for the given ids (or all recent triage docs)."""
+def _triage_map(alert_ids):
+    """{alert_id: triage_doc} for the given ids."""
+    if not alert_ids:
+        return {}
     try:
-        if alert_ids:
-            body = {"size": 1000, "query": {"ids": {"values": list(alert_ids)}}}
-        else:
-            body = {"size": 1000, "sort": [{"updated_at": {"order": "desc"}}]}
-        res = client.search(index=TRIAGE_INDEX, body=body)
+        res = client.search(index=TRIAGE_INDEX, body={
+            "size": len(alert_ids), "query": {"ids": {"values": list(alert_ids)}},
+        })
     except Exception:
         return {}
     return {h["_id"]: h["_source"] for h in res["hits"]["hits"]}
@@ -99,82 +155,42 @@ def rule_alerts(limit: int = 50, min_level: int = 0):
         "sort": [{"timestamp": {"order": "desc"}}],
         "query": {"range": {"rule.level": {"gte": min_level}}},
     }
-    res = client.search(index="wazuh-alerts-4.x-*", body=body)
+    res = client.search(index=RULE_INDEX, body=body)
     return {
         "count": res["hits"]["total"]["value"],
-        "alerts": _merge_triage([_fmt(h) for h in res["hits"]["hits"]]),
+        "alerts": _merge_triage([_fmt_rule(h) for h in res["hits"]["hits"]]),
     }
 
 @app.get("/api/stats")
 def stats():
-    """Counts for the dashboard summary cards."""
-    total = client.count(index="wazuh-alerts-4.x-*")["count"]
-    agg = client.search(index="wazuh-alerts-4.x-*", body={
-        "size": 0,
-        "aggs": {"by_level": {"terms": {"field": "rule.level", "size": 20}}},
-    })
-
+    """All-time totals for the legacy split view (dashboard.html). The console
+    reads /api/metrics instead, which is time-ranged."""
+    total = client.count(index=RULE_INDEX)["count"]
     try:
-        ai_total = client.count(index="ai-detections-*")["count"]
+        ai_total = client.count(index=AI_INDEX)["count"]
     except Exception:
         ai_total = 0
 
-    return {
-        "rule_alerts": total,
-        "ai_alerts": ai_total,
-        "by_level": {b["key"]: b["doc_count"]
-                     for b in agg["aggregations"]["by_level"]["buckets"]},
-    }
+    return {"rule_alerts": total, "ai_alerts": ai_total}
 
 @app.get("/api/alerts/ai")
 def ai_alerts(limit: int = 50):
     """AI-detected anomalies (source=morpheus_ai)."""
     try:
-        res = client.search(index="ai-detections-*", body={
+        res = client.search(index=AI_INDEX, body={
             "size": limit,
             "sort": [{"timestamp": {"order": "desc"}}],
         })
     except Exception:
         return {"count": 0, "alerts": []}      # index may not exist yet
 
-    out = []
-    for h in res["hits"]["hits"]:
-        s = h["_source"]
-        ai = s.get("ai", {})
-        top_ips = ai.get("top_srcips") or []
-        out.append({
-            "id":          f"ai:{h['_id']}",
-            "timestamp":   s.get("timestamp"),
-            "rule_id":     s.get("rule", {}).get("id"),
-            "level":       s.get("rule", {}).get("level"),
-            "description": s.get("rule", {}).get("description"),
-            "agent":       s.get("agent", {}).get("name"),
-            "source":      "ai",
-            "model":       ai.get("model"),
-            "pipeline":    ai.get("pipeline"),
-            "window":      ai.get("window"),
-            "score":       ai.get("anomaly_score"),
-            "event_count": ai.get("event_count"),
-            "distinct_users": ai.get("distinct_users"),
-            "events_per_user": ai.get("events_per_user"),
-            # web lane (rule 100002) window features; absent on auth detections
-            "request_count":   ai.get("request_count"),
-            "distinct_urls":   ai.get("distinct_urls"),
-            "error_ratio":     ai.get("error_ratio"),
-            "not_found_count": ai.get("not_found_count"),
-            "post_ratio":      ai.get("post_ratio"),
-            "top_urls":        ai.get("top_urls") or [],
-            "category":    ai.get("category"),
-            "mitre":       ai.get("mitre"),
-            "srcip":       top_ips[0]["ip"] if top_ips else None,
-            "top_srcips":  top_ips,
-            "explanation": ai.get("explanation"),
-            "explained_by": ai.get("explained_by"),
-        })
-    return {"count": res["hits"]["total"]["value"], "alerts": _merge_triage(out)}
+    return {
+        "count": res["hits"]["total"]["value"],
+        "alerts": _merge_triage([_fmt_ai(h) for h in res["hits"]["hits"]]),
+    }
 
 @app.get("/api/alerts/histogram")
-def histogram(hours: int = 24, interval: str = "30m", min_level: int = 10):
+def histogram(hours: int = 24, interval: str = "30m", min_level: int = ATTACK_LEVEL):
     """Alert counts over time, split rule vs AI — feeds the overview time chart."""
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
@@ -203,9 +219,9 @@ def histogram(hours: int = 24, interval: str = "30m", min_level: int = 10):
         except Exception:
             return {}
 
-    rule = bucket_counts("wazuh-alerts-4.x-*",
+    rule = bucket_counts(RULE_INDEX,
                          [{"range": {"rule.level": {"gte": min_level}}}])
-    ai = bucket_counts("ai-detections-*", [])
+    ai = bucket_counts(AI_INDEX, [])
     keys = sorted(set(rule) | set(ai))
     return {"buckets": [
         {"time": k, "rule": rule.get(k, 0), "ai": ai.get(k, 0)} for k in keys
@@ -225,7 +241,7 @@ def top_srcips(hours: int = 24, size: int = 10):
         "aggs": {"ips": {"terms": {"field": "data.srcip", "size": size}}},
     }
     try:
-        res = client.search(index="wazuh-alerts-4.x-*", body=body)
+        res = client.search(index=RULE_INDEX, body=body)
         return {"ips": [{"ip": b["key"], "count": b["doc_count"]}
                         for b in res["aggregations"]["ips"]["buckets"]]}
     except Exception:
@@ -235,7 +251,7 @@ def top_srcips(hours: int = 24, size: int = 10):
 @app.get("/api/alerts/combined")
 def combined(limit: int = 100):
     """Both streams merged, newest first — what the dashboard renders."""
-    rules = rule_alerts(limit=limit, min_level=10)["alerts"]   # 10+ = attack declaration
+    rules = rule_alerts(limit=limit, min_level=ATTACK_LEVEL)["alerts"]
     ai    = ai_alerts(limit=limit)["alerts"]
     merged = sorted(rules + ai, key=lambda a: a["timestamp"] or "", reverse=True)
     return {
@@ -416,8 +432,8 @@ class TriageUpdate(BaseModel):
 
 @app.get("/api/triage")
 def triage_list(limit: int = 500):
-    """Every triage record, newest first — feeds the metrics page and any
-    'my queue' style views."""
+    """Every triage record, newest first. Not read by the console yet (metrics
+    query the index directly); here for a 'my queue' view and ad-hoc checks."""
     try:
         res = client.search(index=TRIAGE_INDEX, body={
             "size": limit,
@@ -473,26 +489,6 @@ def triage_set(req: TriageUpdate):
 
 # ----------------------------------------------------------------- metrics
 
-def _category_agg(start_iso):
-    try:
-        res = client.search(index="ai-detections-*", body={
-            "size": 0,
-            "query": {"range": {"timestamp": {"gte": start_iso}}},
-            "aggs": {"c": {"terms": {"field": "ai.category.keyword", "size": 20}}},
-        })
-        return [{"category": b["key"], "count": b["doc_count"]}
-                for b in res["aggregations"]["c"]["buckets"]]
-    except Exception:
-        return []
-
-
-@app.get("/api/alerts/by_category")
-def by_category(hours: int = 168):
-    """AI detections grouped by heuristic category — feeds the breakdown chart."""
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    return {"categories": _category_agg(start)}
-
-
 @app.get("/api/metrics")
 def metrics(hours: int = 168):
     """The rule-vs-AI comparison plus SOC workflow metrics (FP rate, MTTR).
@@ -507,13 +503,13 @@ def metrics(hours: int = 168):
         except Exception:
             return 0
 
-    rule_total = _count("wazuh-alerts-4.x-*", [
+    rule_total = _count(RULE_INDEX, [
         {"range": {"timestamp": {"gte": start}}},
-        {"range": {"rule.level": {"gte": 10}}},
+        {"range": {"rule.level": {"gte": ATTACK_LEVEL}}},
     ])
     # the all-levels volume, for the alert-fatigue comparison (R8)
-    rule_all = _count("wazuh-alerts-4.x-*", [{"range": {"timestamp": {"gte": start}}}])
-    ai_total = _count("ai-detections-*", [{"range": {"timestamp": {"gte": start}}}])
+    rule_all = _count(RULE_INDEX, [{"range": {"timestamp": {"gte": start}}}])
+    ai_total = _count(AI_INDEX, [{"range": {"timestamp": {"gte": start}}}])
 
     def _minutes(index, filters):
         try:
@@ -528,11 +524,11 @@ def metrics(hours: int = 168):
         except Exception:
             return set()
 
-    rule_min = _minutes("wazuh-alerts-4.x-*", [
+    rule_min = _minutes(RULE_INDEX, [
         {"range": {"timestamp": {"gte": start}}},
-        {"range": {"rule.level": {"gte": 10}}},
+        {"range": {"rule.level": {"gte": ATTACK_LEVEL}}},
     ])
-    ai_min = _minutes("ai-detections-*", [{"range": {"timestamp": {"gte": start}}}])
+    ai_min = _minutes(AI_INDEX, [{"range": {"timestamp": {"gte": start}}}])
 
     try:
         tres = client.search(index=TRIAGE_INDEX, body={"size": 2000})
@@ -574,7 +570,6 @@ def metrics(hours: int = 168):
         "mttr_seconds": round(sum(resolve_secs) / len(resolve_secs))
                         if resolve_secs else None,
         "triaged": len(tdocs),
-        "by_category": _category_agg(start),
     }
 
 
@@ -594,18 +589,7 @@ def explain_alert(req: ExplainRequest):
         raise HTTPException(status_code=400,
                             detail="explanations are only generated for AI detections")
     doc_id = req.alert_id.split(":", 1)[1]
-
-    try:
-        res = client.search(index="ai-detections-*", body={
-            "size": 1, "query": {"ids": {"values": [doc_id]}},
-        })
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
-
-    hits = res["hits"]["hits"]
-    if not hits:
-        raise HTTPException(status_code=404, detail="detection not found")
-    hit = hits[0]
+    hit = _get_detection(doc_id)
 
     try:
         text, provider_used = explainer.explain(hit["_source"], provider=req.provider)
@@ -647,22 +631,11 @@ def explain_chat(req: ExplainChatRequest):
                             detail="chat is only available for AI detections")
     if len(req.messages) > 20:
         raise HTTPException(status_code=400, detail="thread too long")
-    doc_id = req.alert_id.split(":", 1)[1]
-
-    try:
-        res = client.search(index="ai-detections-*", body={
-            "size": 1, "query": {"ids": {"values": [doc_id]}},
-        })
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"OpenSearch query failed: {e}")
-
-    hits = res["hits"]["hits"]
-    if not hits:
-        raise HTTPException(status_code=404, detail="detection not found")
+    hit = _get_detection(req.alert_id.split(":", 1)[1])
 
     thread = [{"role": m.role, "content": m.content} for m in req.messages]
     try:
-        reply, provider_used = explainer.chat(hits[0]["_source"], thread,
+        reply, provider_used = explainer.chat(hit["_source"], thread,
                                               provider=req.provider)
     except Exception as e:
         name = req.provider or explainer.PROVIDER

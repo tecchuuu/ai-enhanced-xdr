@@ -2,8 +2,7 @@ import { useState } from "react";
 import { EuiInMemoryTable } from "@elastic/eui";
 import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
 import AlertFlyout from "./AlertFlyout";
-
-const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
+import { fmtTime } from "../lib/format";
 
 const TRIAGE_FILTER = {
   type: "field_value_selection",
@@ -16,7 +15,14 @@ const TRIAGE_FILTER = {
   })),
 };
 
-export default function AlertsTable({ alerts, loading, showScore = false, onRefresh }) {
+// showSource: off on single-source pages, where every row would say the same thing
+export default function AlertsTable({
+  alerts,
+  loading,
+  showScore = false,
+  showSource = true,
+  onRefresh,
+}) {
   const [selected, setSelected] = useState(null);
 
   // keep the open flyout pointed at the freshest copy of its alert, so a triage
@@ -50,7 +56,7 @@ export default function AlertsTable({ alerts, loading, showScore = false, onRefr
       width: "150px",
       render: (c) => c ?? "—",
     },
-    {
+    showSource && {
       field: "source",
       name: "Source",
       render: (source) => <SourceBadge source={source} />,
@@ -65,7 +71,7 @@ export default function AlertsTable({ alerts, loading, showScore = false, onRefr
       width: "120px",
     },
     { field: "srcip", name: "Source IP", sortable: true, width: "130px" },
-  ];
+  ].filter(Boolean);
 
   if (showScore) {
     columns.splice(4, 0, {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
   EuiHeader,
   EuiHeaderSection,
@@ -9,10 +9,11 @@ import {
   EuiButtonIcon,
   EuiPageTemplate,
   EuiSideNav,
-  EuiText,
+  EuiTextColor,
   EuiToolTip,
 } from "@elastic/eui";
-import { getCombined, getHealth } from "./api";
+import { getHealth } from "./api";
+import { usePolling } from "./lib/usePolling";
 import { useTheme } from "./theme/ThemeProvider";
 import Overview from "./pages/Overview";
 import SecurityEvents from "./pages/SecurityEvents";
@@ -75,30 +76,20 @@ const NAV_GROUPS = [
 export default function App() {
   const { colorMode, toggle } = useTheme();
   const [page, setPage] = useState("overview");
-  const [combined, setCombined] = useState(null);
   const [connected, setConnected] = useState(null); // null = connecting
-  const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState(null);
 
-  const load = useCallback(async () => {
+  // each page loads and polls its own data; the header only tracks the API
+  usePolling(async (isCurrent) => {
     try {
-      const c = await getCombined(200);
-      setCombined(c);
+      await getHealth();
+      if (!isCurrent()) return;
       setConnected(true);
       setUpdatedAt(new Date());
     } catch {
-      setConnected(false);
-    } finally {
-      setLoading(false);
+      if (isCurrent()) setConnected(false);
     }
-  }, []);
-
-  useEffect(() => {
-    load();
-    getHealth().catch(() => setConnected(false));
-    const t = setInterval(load, REFRESH_MS);
-    return () => clearInterval(t);
-  }, [load]);
+  }, REFRESH_MS);
 
   const navItems = NAV_GROUPS.map((g) => ({
     id: g.id,
@@ -156,20 +147,13 @@ export default function App() {
           <EuiSideNav items={navItems} />
         </EuiPageTemplate.Sidebar>
 
+        {/* EUI already wraps the description in a <p>, so it must be inline */}
         <EuiPageTemplate.Header
           pageTitle={PAGES[page].title}
-          description={
-            <EuiText size="s" color="subdued">
-              {PAGES[page].description}
-            </EuiText>
-          }
+          description={<EuiTextColor color="subdued">{PAGES[page].description}</EuiTextColor>}
         />
         <EuiPageTemplate.Section>
-          <Page
-            combined={combined}
-            loading={loading}
-            onRefresh={load}
-          />
+          <Page />
         </EuiPageTemplate.Section>
       </EuiPageTemplate>
     </>
