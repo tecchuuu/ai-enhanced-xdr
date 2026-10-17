@@ -38,7 +38,7 @@ flowchart LR
     class GPU fut
 ```
 
-**Note for the report:** the GPU environment is drawn with dashed edges to mark the boundary between the locally-built core and the Morpheus deployment on external (SIAM AI) hardware. As of Sep 2026 that hardware is **provisioned** — an H100 80GB, passthrough, available 2 Sep – 30 Nov 2026 — so this is an active deployment target, not a hypothetical one. The earlier framing (development GPU is AMD / no CUDA) no longer applies; that constraint was lifted when SIAM AI provided the H100. Once Morpheus is running on it, redraw these edges solid. *(A BlueField-3 DPU is provisioned on the same host for the Phase 2 network lane — Suricata → Kafka — not shown in this Level-0 view; add it when that lane is built.)*
+**Note for the report:** the GPU environment is drawn with dashed edges to mark the boundary between the locally-built core and the Morpheus deployment on external (SIAM AI) hardware. As of Sep 2026 that hardware is **provisioned** — an H100 80GB, passthrough, available 2 Sep – 30 Nov 2026 — so this is an active deployment target, not a hypothetical one. The earlier framing (development GPU is AMD / no CUDA) no longer applies; that constraint was lifted when SIAM AI provided the H100. Once Morpheus is running on it, redraw these edges solid. *(The host also carries a BlueField-3 DPU. It is not shown because the network lane it was intended for is out of scope.)*
 
 ---
 

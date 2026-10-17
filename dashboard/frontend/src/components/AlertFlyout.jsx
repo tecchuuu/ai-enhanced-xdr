@@ -39,13 +39,16 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
 
+  // reset only when a different alert is opened — the list polls and hands us a
+  // fresh object for the same alert, which would otherwise wipe unsaved input
   useEffect(() => {
     setStatus(alert?.triage_status ?? "new");
     setAssignee(alert?.assignee ?? "");
     setNote(alert?.triage_note ?? "");
     setSaved(false);
     setError(null);
-  }, [alert]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alert?.id]);
 
   if (!alert) return null;
 
@@ -90,10 +93,35 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
 
   if (alert.source === "ai") {
     items.push(
-      { title: "Anomaly score", description: String(alert.score ?? "—") },
-      { title: "Events in window", description: String(alert.event_count ?? "—") },
-      { title: "Distinct users", description: String(alert.distinct_users ?? "—") }
+      { title: "Model", description: alert.model ?? "—" },
+      { title: "Anomaly score", description: String(alert.score ?? "—") }
     );
+    // each lane windows a different feature set (ROADMAP rule 1)
+    if (alert.pipeline === "web-streaming") {
+      items.push(
+        { title: "Requests in window", description: String(alert.request_count ?? "—") },
+        { title: "Distinct URLs", description: String(alert.distinct_urls ?? "—") },
+        { title: "Error ratio", description: String(alert.error_ratio ?? "—") },
+        { title: "404 responses", description: String(alert.not_found_count ?? "—") },
+        { title: "POST ratio", description: String(alert.post_ratio ?? "—") }
+      );
+      if (alert.top_urls?.length) {
+        items.push({
+          title: "Top URLs",
+          description: alert.top_urls.map((u) => (
+            <div key={u.url}>
+              {u.url} ({u.count})
+            </div>
+          )),
+        });
+      }
+    } else {
+      items.push(
+        { title: "Events in window", description: String(alert.event_count ?? "—") },
+        { title: "Distinct users", description: String(alert.distinct_users ?? "—") },
+        { title: "Events per user", description: String(alert.events_per_user ?? "—") }
+      );
+    }
     if (alert.top_srcips?.length) {
       items.push({
         title: "Top source IPs",

@@ -18,7 +18,6 @@ async function postJson(path, payload) {
 }
 
 export const getHealth = () => fetchJson("/api/health");
-export const getStats = () => fetchJson("/api/stats");
 export const getRuleAlerts = (limit = 100, minLevel = 0) =>
   fetchJson(`/api/alerts/rule?limit=${limit}&min_level=${minLevel}`);
 export const getAiAlerts = (limit = 100) => fetchJson(`/api/alerts/ai?limit=${limit}`);

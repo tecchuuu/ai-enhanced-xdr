@@ -11,7 +11,12 @@ import {
 import { getResponseLog } from "../api";
 import BlockedIps from "../components/BlockedIps";
 
-const STATUS_COLOR = { executed: "success", refused: "warning", failed: "danger" };
+const STATUS_COLOR = {
+  executed: "success",
+  unconfirmed: "warning",
+  refused: "warning",
+  failed: "danger",
+};
 const fmtTime = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
 
 export default function ResponseLog() {

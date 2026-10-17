@@ -8,7 +8,7 @@ import {
   EuiFlexItem,
   EuiButtonGroup,
 } from "@elastic/eui";
-import { getHistogram, getTopSrcIps, getByCategory } from "../api";
+import { getHistogram, getTopSrcIps, getByCategory, getMetrics } from "../api";
 import StatPanels from "../components/StatPanels";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
@@ -22,8 +22,9 @@ const RANGES = [
   { id: "720", label: "30d", interval: "12h" },
 ];
 
-export default function Overview({ stats, combined, loading, onRefresh }) {
+export default function Overview({ combined, loading, onRefresh }) {
   const [rangeId, setRangeId] = useState("24");
+  const [metrics, setMetrics] = useState(null);
   const [buckets, setBuckets] = useState(null);
   const [ips, setIps] = useState(null);
   const [categories, setCategories] = useState(null);
@@ -34,12 +35,14 @@ export default function Overview({ stats, combined, loading, onRefresh }) {
     let alive = true;
     const load = async () => {
       try {
-        const [h, t, c] = await Promise.all([
+        const [m, h, t, c] = await Promise.all([
+          getMetrics(Number(range.id)),
           getHistogram(Number(range.id), range.interval),
           getTopSrcIps(Number(range.id)),
           getByCategory(Number(range.id)),
         ]);
         if (!alive) return;
+        setMetrics(m);
         setBuckets(h.buckets);
         setIps(t.ips);
         setCategories(c.categories);
@@ -59,7 +62,7 @@ export default function Overview({ stats, combined, loading, onRefresh }) {
 
   return (
     <>
-      <StatPanels stats={stats} combined={combined} />
+      <StatPanels metrics={metrics} hours={range.label} />
       <EuiSpacer />
       <EuiFlexGroup justifyContent="flexEnd" responsive={false}>
         <EuiFlexItem grow={false}>

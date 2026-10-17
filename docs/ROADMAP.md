@@ -12,12 +12,13 @@ events_per_user / hour). To cover a new attack type, clone
 |---|---|---|---|---|
 | auth | sshd/PAM | events/user, distinct users | brute force, spraying | exists, evaluated |
 | web | nginx/apache access logs | request rate, URL diversity, 4xx ratio, POST ratio | fuzzing, injection, login brute force | online + validated 2026-09-09 (R11): content discovery + path traversal caught, real off-host IP |
-| network | conn/firewall logs | distinct dst ports, conn rate/src | port scans, sweeps | not started |
+| network | conn/firewall logs | distinct dst ports, conn rate/src | port scans, sweeps | **out of scope** (decided 2026-10-17) |
 | host | FIM/syscheck (already running) | file changes/min, new bins, sudo | persistence, priv-esc | not started |
 
 Each writes to the same `ai-detections-*` schema with its own `ai.category` and
-rule id (auth = 100001, web = 100002). Dashboard/backend need zero changes —
-they already render category, severity, top_srcips.
+rule id (auth = 100001, web = 100002). The dashboard renders category, severity
+and top_srcips for any lane unchanged; lane-specific window fields (e.g. web's
+`top_urls`) need a few lines in `ai_alerts()` and the alert flyout.
 
 **Web detector — to bring online:** stand up nginx on the monitored host, feed
 `/var/log/nginx/access.log` to Wazuh via a `<localfile>` block, then run
@@ -48,11 +49,9 @@ independently. The per-lane requirement is unchanged, and the coherent-slice rul
 holds (never mix lanes):
 - **Auth lane** → SIAM Linux auth logs (multi-host, multi-user, real IPs) directly
   retire the single-host / single-IP / no-success-baseline limits in results-log §5.3.
-- **Network lane** → the BlueField-3 DPU is provisioned but **unreachable** (host `rshim`
-  driver broken, so the DPU's ARM complex can't be managed; failure log Entry 27). Lane is
-  deferred pending a provider fix; fallback is a software Suricata/Zeek sensor emitting the
-  same EVE-JSON. Public Zeek/Suricata captures fit that shape directly; CICIDS2017 is an
-  optional external benchmark, not the plan (different schema).
+- **Network lane** → **out of scope** (decided 2026-10-17; failure log Entry 32). The
+  BlueField-3 DPU it was meant to run on was provisioned but never reachable (host `rshim`
+  driver broken; failure log Entry 27). No network dataset is needed.
 
 ## 3. LLM is a READER, not a pipeline stage — LIVE on the H100
 The LLM consumes existing `ai-detections-*` docs and writes a 2-sentence analyst

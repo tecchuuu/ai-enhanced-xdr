@@ -127,4 +127,3 @@ To run the live consumer on Morpheus: `conda activate morpheus` then `DETECTOR_M
 
 ## Later (stretch, unpredictable)
 - **Three-model comparison on a large dataset** — the 28-window fixture is too small for the neural models to show their advantage (R16 honest notes).
-- **DPU network lane** — blocked: the BlueField-3 is provisioned but its host `rshim` driver is broken, so the card cannot be managed (failure log Entry 27). Fallback is a software Suricata/Zeek sensor on the host → EVE JSON → separate Kafka consumer + model.

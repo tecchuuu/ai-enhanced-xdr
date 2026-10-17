@@ -172,10 +172,10 @@ Standard SAD assumes a database CRUD app; yours is a pipeline, so fit varies. Ru
 
 **A) Local dev VM (unchanged, still useful).** Ubuntu on VMware Workstation Pro (Windows host), 4 cores / 10–12GB RAM / 80–100GB dynamic disk. This is where the project was built through Steps 1–3. Keep it as the offline dev box and the fallback if the VPN to SIAM AI is flaky. On *this* box the old RAM discipline still applies: component-by-component, cap OpenSearch heap (`-Xms1g -Xmx1g`), Kafka in KRaft, keep the LLM off it. RAM is the binding constraint here.
 
-**B) Provided SIAM AI VM (Sep 2–Nov 30, 2026 — the deployment target).** Ubuntu 24.04, **14 vCPU / 224GB RAM / 3.4TB disk / 1× H100 80GB (passthrough) / 1× BlueField-3 DPU (passthrough)**, reached over VPN+SSH. This is where Morpheus, the real LLM, and the DPU network lane run. Notes:
+**B) Provided SIAM AI VM (Sep 2–Nov 30, 2026 — the deployment target).** Ubuntu 24.04, **14 vCPU / 224GB RAM / 3.4TB disk / 1× H100 80GB (passthrough) / 1× BlueField-3 DPU (passthrough)**, reached over VPN+SSH. This is where Morpheus and the real LLM run. Notes:
   - **RAM is no longer the constraint here** — run everything at once if you want. The heap-cap and sequential-startup rules are local-VM survival tactics, not needed on this box.
   - **The H100 unblocks Morpheus and the local LLM.** Both move from "designed toward" to "deployed."
-  - **The BlueField-3 is the network-lane sensor** (Suricata on the DPU → flows into Kafka). See Part 2 / Phase 2.
+  - **The BlueField-3 DPU is not used.** It was planned as the network-lane sensor, but that lane is out of scope (decided 2026-10-17; see Step 10).
   - **Shared with another group on the same VM.** Isolate your work in Docker containers; pick a port range and tell the other group; never point attacks at anything outside your own containers; the H100 and DPU are shared, so coordinate and don't assume exclusive access.
   - **Egress may be locked down** — test `curl github.com` early; if blocked, `scp` datasets/models over the VPN.
   - **Back up continuously** (git push; the consent form puts data loss on you) and **the VM disappears 30 Nov** — anything that exists only there is gone then.
@@ -221,12 +221,8 @@ Order matters because only this work depends on hardware that goes away:
 - **9c — Morpheus on the H100.** Real run, real throughput numbers. The design already matches DFP's Kafka-native shape (Part 6), so this is deployment, not redesign.
 - **9d — Local LLM alert explanation** served on the H100 (vLLM + a 20–70B model), on-demand.
 
-**Step 10 — Phase 2: the DPU network lane (committed).**
-Second sensor, second coherent data slice — network flows alongside the auth lane. This is the cross-layer "X" in XDR and the part the sponsor most wants to see (DPU acceleration is named in their use-list).
-- Suricata on the BlueField's Arm side, watching container-to-container traffic, emitting EVE JSON.
-- EVE JSON → the same Kafka; a **separate** consumer + **separate** model (network features never mixed with auth features — see the coherent-slice rule).
-- Detections tagged distinctly, surfaced on the same dashboard next to the auth lane.
-- **Gate (not a cancel, a sequence):** land 9a–9d — the scoped auth-lane system, complete and defensible — *before* starting Step 10. If the core is solid with runway left, Phase 2 is the standout chapter. If time runs short, it degrades gracefully to a documented, part-built future-work item with real justification. Either way the degree-critical work is done first.
+**Step 10 — DPU network lane: OUT OF SCOPE (decided 2026-10-17).**
+Originally planned as Phase 2: Suricata on the BlueField's Arm side → EVE JSON → the same Kafka → a separate consumer + model, adding a network-level data slice next to the auth lane. The DPU was never reachable (host `rshim` driver broken; failure log Entry 27), and the lane was then ruled out of scope rather than substituted with a software sensor (failure log Entry 32). Consequence: every detection lane (auth, web) is host-side, so there is no network-flow view — stated as a limitation in บทที่ 5 (results log, Known limitation 6).
 
 **Step 11 — Benchmarks, writeup, handover.**
 Throughput/latency/GPU-utilization numbers, the rule-only vs rule+AI comparison, and the two deliverables: the academic report (grades *you* — failures included) and the sponsor handover (repo + knowledge presentation; leads with what their hardware achieved). Consent form clause 5 requires the handover — pin the date with your advisor/SIAM contact early, it's likely late Nov.

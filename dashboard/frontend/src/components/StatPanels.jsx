@@ -27,26 +27,14 @@ function Dot({ color }) {
   );
 }
 
-export default function StatPanels({ stats, combined }) {
+// Fed by /api/metrics for the Overview's selected range, so these are the same
+// numbers the Metrics page shows for that range — one definition of each.
+export default function StatPanels({ metrics, hours }) {
   const p = usePalette();
-  const ruleCount = stats?.rule_alerts ?? "—";
-  const aiCount = stats?.ai_alerts ?? "—";
-
-  // windows where the model fired and no rule did (computed from the merged feed)
-  let modelOnly = "—";
-  if (combined?.alerts) {
-    const ruleMinutes = new Set(
-      combined.alerts
-        .filter((a) => a.source !== "ai" && a.timestamp)
-        .map((a) => a.timestamp.slice(0, 16)),
-    );
-    modelOnly = combined.alerts.filter(
-      (a) =>
-        a.source === "ai" &&
-        a.timestamp &&
-        !ruleMinutes.has(a.timestamp.slice(0, 16)),
-    ).length;
-  }
+  const ruleCount = metrics?.rule_alerts ?? "—";
+  const allLevels = metrics?.rule_alerts_all_levels;
+  const aiCount = metrics?.ai_detections ?? "—";
+  const aiOnly = metrics?.overlap_minutes?.ai_only ?? "—";
 
   return (
     <EuiFlexGroup gutterSize="m" alignItems="stretch">
@@ -59,10 +47,15 @@ export default function StatPanels({ stats, combined }) {
             description={
               <>
                 <Dot color={p.rule} />
-                Rule alerts
+                Rule alerts (level 10+)
               </>
             }
           />
+          {allLevels != null && (
+            <EuiText size="xs" color="subdued">
+              <p>{allLevels.toLocaleString()} at all levels, last {hours}.</p>
+            </EuiText>
+          )}
         </EuiPanel>
       </EuiFlexItem>
 
@@ -86,20 +79,20 @@ export default function StatPanels({ stats, combined }) {
       <EuiFlexItem>
         <EuiPanel hasBorder paddingSize="m">
           <EuiStat
-            title={String(modelOnly)}
+            title={String(aiOnly)}
             titleSize="l"
             titleColor="default"
             description={
               <>
                 <Dot color={p.ai} />
-                Model-only catches
+                Minutes AI-only (rules silent)
               </>
             }
           />
           <EuiText size="xs" color="subdued">
             <p>
-              Windows the model flagged with no rule alert in the same minute —
-              what signature detection missed.
+              Minutes, last {hours}, where the model flagged a window and no
+              level 10+ rule fired — what signature detection missed.
             </p>
           </EuiText>
         </EuiPanel>

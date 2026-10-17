@@ -386,6 +386,11 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
 - **Fix:** every host port moved into compose variables (`wazuh/.env`, `ai-stack/.env`) with the current values as defaults, so nothing changes on a machine you own; `KAFKA_BOOTSTRAP` added to the pipeline and **printed in each consumer's startup banner**, so the broker in use is always visible. Documented as SETUP.md §0 with a known-free port set.
 - **Lesson:** the instinct was to stop their containers. Their `edrxdr-replay-*` containers had been up 39-40 hours — an evaluation run, the same kind this project ran overnight in August. Shared infrastructure makes "just restart it" someone else's lost dataset. Being *configurable* is the durable answer: it removed the dependency on their schedule entirely, and took twenty minutes.
 
+### Entry 32 — Scope decision: the DPU network lane is out of scope (2026-10-17)
+- Confirmed that the BlueField-3 DPU network lane falls outside this project's scope. It had been carried as "Phase 2 (committed)" in `project_plan.md` Step 10 and as "deferred pending a provider fix" in Entry 27; the `rshim` fault was never resolved, so nothing was built for it.
+- **Decision:** dropped, not substituted — the software fallback recorded in Entry 27 (Suricata/Zeek on the host) is not pursued either. Docs that promised the lane (README, SETUP, ROADMAP, project plan) now say out of scope; Entries 18 and 27 are left as written, since they record what was true at the time.
+- **Consequence:** both detection lanes (auth, web) read endpoint logs, so coverage is across log sources on the host, not across layers (endpoint + network). Stated as Known limitation 6 in `results_log.md`.
+
 ## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live; Morpheus in the slot)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
@@ -393,7 +398,7 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
   - Real: SSH server + Wazuh agent (`ubuntu-vm`) deployed and Active; endpoint → agent → manager → decode → `archives.json` proven; feature engineering working (JSON → windowed features). One genuine model-only detection at 05:32 + one acknowledged false positive.
 - **OVERNIGHT EVALUATION COMPLETE:** ~7.5 h run, 4,057 events, three attack episodes at 3 s / 30 s / 75 s spacing with independent ground-truth timestamps. **Rules detected episodes 1 and 2 (2 alerts each) and produced zero alerts for episode 3; the model produced detections in all three.** 34 AI detections written. This is the headline result (R10).
 - **Step 8 SAD diagrams COMPLETE:** Context Diagram, DFD Level 1, Data Dictionary, and State Diagram written as Mermaid source in `docs/sad_diagrams_chapter3.md`, describing the system as built with divergences from the proposal noted. This closes what was previously the largest documentation gap.
-- **HARDWARE PROVISIONED (see Entry 18):** SIAM AI H100 80GB + BlueField-3 DPU VM available 2 Sep – 30 Nov 2026. Morpheus and the local LLM move from "documented target" to actual deployment targets; the DPU enables the Phase 2 network lane. Not yet accessed — VPN/SSH onboarding is the next hardware step.
+- **HARDWARE PROVISIONED (see Entry 18):** SIAM AI H100 80GB + BlueField-3 DPU VM available 2 Sep – 30 Nov 2026. Morpheus and the local LLM move from "documented target" to actual deployment targets; the DPU network lane was later ruled out of scope (Entry 32). Not yet accessed — VPN/SSH onboarding is the next hardware step.
 - **Results banked for บทที่ 4:** (1) mock IF 5/5 @ ~1% FPR; (2) **R10 — detection degradation by attack speed, ground-truth verified**; (3) alert reduction (384 rule alerts → 5 model detections in the earlier session); (4) anomaly *scores* provide ranking, not binary thresholds; (5) live streaming pipeline demonstrated end-to-end.
 - **KNOWN DATA LIMITATIONS (state in บทที่ 5):** single-host lab data, one source IP (127.0.0.1 — `srcip` unusable as a feature), single monitored endpoint, episode-3 detections are weak-signal, host suspension created a ~3 h baseline gap.
 - **REMAINING WORK:**
@@ -402,7 +407,7 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
   3. **Write up บทที่ 4 and 5** from `results_log.md` and this file. Raw material is complete; the prose is not written. SAD source for บทที่ 3 is now done (`sad_diagrams_chapter3.md`).
   4. **Local LLM alert explanation** — now deployable on the provided H100 (vLLM + a 20–70B model), on-demand. SIAM goal #3.
   5. **Autoencoder** — model step-up, comparison against Isolation Forest.
-  6. **Phase 2 — DPU network lane** — Suricata on the BlueField → EVE JSON → same Kafka → separate consumer + separate model. Gated behind landing the auth lane on the provided VM first.
+  6. **DPU network lane — out of scope** (decided 2026-10-17, Entry 32). Not built; no software substitute.
   7. Optional: multi-scale windowing analysis (1 / 5 / 15 min) on the overnight dataset — the data now supports it and it directly addresses the slow-attack question.
 - **Security debt outstanding:** OpenSearch credentials are now in `dashboard/.env` (resolved). Remaining: the stale July cert copy under `wazuh/config/wazuh_indexer_ssl_certs/` is dead since regeneration and should be deleted so there is one source of truth.
 - **Fixes to apply before any future unattended run:** `python -u` for the consumer (unbuffered logging); disable host sleep; randomise attack times/intensities rather than repeating a fixed schedule.

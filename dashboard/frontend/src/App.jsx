@@ -12,7 +12,7 @@ import {
   EuiText,
   EuiToolTip,
 } from "@elastic/eui";
-import { getStats, getCombined, getHealth } from "./api";
+import { getCombined, getHealth } from "./api";
 import { useTheme } from "./theme/ThemeProvider";
 import Overview from "./pages/Overview";
 import SecurityEvents from "./pages/SecurityEvents";
@@ -75,7 +75,6 @@ const NAV_GROUPS = [
 export default function App() {
   const { colorMode, toggle } = useTheme();
   const [page, setPage] = useState("overview");
-  const [stats, setStats] = useState(null);
   const [combined, setCombined] = useState(null);
   const [connected, setConnected] = useState(null); // null = connecting
   const [loading, setLoading] = useState(true);
@@ -83,8 +82,7 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [s, c] = await Promise.all([getStats(), getCombined(200)]);
-      setStats(s);
+      const c = await getCombined(200);
       setCombined(c);
       setConnected(true);
       setUpdatedAt(new Date());
@@ -168,7 +166,6 @@ export default function App() {
         />
         <EuiPageTemplate.Section>
           <Page
-            stats={stats}
             combined={combined}
             loading={loading}
             onRefresh={load}

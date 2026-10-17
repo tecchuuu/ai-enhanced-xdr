@@ -150,9 +150,20 @@ def ai_alerts(limit: int = 50):
             "description": s.get("rule", {}).get("description"),
             "agent":       s.get("agent", {}).get("name"),
             "source":      "ai",
+            "model":       ai.get("model"),
+            "pipeline":    ai.get("pipeline"),
+            "window":      ai.get("window"),
             "score":       ai.get("anomaly_score"),
             "event_count": ai.get("event_count"),
             "distinct_users": ai.get("distinct_users"),
+            "events_per_user": ai.get("events_per_user"),
+            # web lane (rule 100002) window features; absent on auth detections
+            "request_count":   ai.get("request_count"),
+            "distinct_urls":   ai.get("distinct_urls"),
+            "error_ratio":     ai.get("error_ratio"),
+            "not_found_count": ai.get("not_found_count"),
+            "post_ratio":      ai.get("post_ratio"),
+            "top_urls":        ai.get("top_urls") or [],
             "category":    ai.get("category"),
             "mitre":       ai.get("mitre"),
             "srcip":       top_ips[0]["ip"] if top_ips else None,
@@ -320,15 +331,17 @@ def response_log(limit: int = 100):
 @app.get("/api/response/blocked")
 def blocked_ips():
     """Currently-blocked IPs, derived from the response audit log:
-    executed blocks minus executed unblocks, latest state per (agent, ip)."""
+    executed blocks minus executed unblocks, latest state per (agent, ip).
+    An unblock Wazuh did not accept keeps the row, flagged, since the drop
+    may still be in place on the agent.
+
+    action/status are matched here rather than in the query: the audit index
+    is dynamically mapped, so they are text fields, and an exact term such as
+    "block-ip" never matches the analyzed tokens ("block", "ip")."""
     try:
         res = client.search(index=f"{RESPONSE_INDEX}-*", body={
-            "size": 1000,
+            "size": 5000,
             "sort": [{"timestamp": {"order": "asc"}}],
-            "query": {"bool": {"filter": [
-                {"terms": {"action": ["block-ip", "unblock-ip"]}},
-                {"term": {"status": "executed"}},
-            ]}},
         })
     except Exception:
         return {"blocked": []}
@@ -337,14 +350,18 @@ def blocked_ips():
     for h in res["hits"]["hits"]:
         s = h["_source"]
         key = f"{s.get('agent_id')}|{s.get('srcip')}"
-        if s.get("action") == "block-ip":
-            state[key] = s
-        else:
-            state.pop(key, None)
+        action, status = s.get("action"), s.get("status")
+        if action == "block-ip" and status == "executed":
+            state[key] = {**s, "unblock_unconfirmed": False}
+        elif action == "unblock-ip" and key in state:
+            if status == "executed":
+                del state[key]
+            elif status == "unconfirmed":
+                state[key]["unblock_unconfirmed"] = True
     return {"blocked": [
         {"agent_id": v.get("agent_id"), "srcip": v.get("srcip"),
          "since": v.get("timestamp"), "alert_ref": v.get("alert_ref"),
-         "reason": v.get("reason")}
+         "reason": v.get("reason"), "unblock_unconfirmed": v["unblock_unconfirmed"]}
         for v in state.values()
     ]}
 
@@ -358,9 +375,10 @@ class UnblockRequest(BaseModel):
 @app.post("/api/response/unblock-ip")
 def unblock_ip(req: UnblockRequest):
     """Best-effort unblock. Wazuh has no first-class 'undo firewall-drop' over the
-    manager API — this attempts the paired delete on the agent and always records
-    the intent, so the blocked-IP view reflects the analyst's action even when the
-    teardown has to be confirmed agent-side."""
+    manager API — this attempts the paired delete on the agent. If Wazuh does not
+    accept it, the action is audited as 'unconfirmed' and the IP stays in the
+    blocked view, flagged, rather than being shown as unblocked while the drop
+    may persist."""
     try:
         ipaddress.ip_address(req.srcip)
     except ValueError:
@@ -370,16 +388,17 @@ def unblock_ip(req: UnblockRequest):
                              reason=req.reason or "manual unblock from dashboard")
     try:
         res = wazuh_api.unblock_ip(req.agent_id, req.srcip)
-        wazuh_msg = res.get("message")
+        wazuh_msg, status = res.get("message"), "executed"
         detail = f"firewall-drop delete sent to agent {req.agent_id}"
     except Exception as e:
-        wazuh_msg = None
-        detail = (f"delete not confirmed ({e}); recorded as unblocked. If the drop "
-                  "persists, remove it on the agent (iptables -D) or install the "
-                  "firewall-drop delete active-response.")
+        wazuh_msg, status = None, "unconfirmed"
+        detail = (f"delete not confirmed ({e}). The drop may persist — remove it on "
+                  "the agent (iptables -D) or install the firewall-drop delete "
+                  "active-response, then retry.")
 
-    doc = _audit("unblock-ip", audit_req, "executed", detail)
-    return {"ok": True, "wazuh": wazuh_msg, "audit": doc}
+    doc = _audit("unblock-ip", audit_req, status, detail)
+    return {"ok": True, "confirmed": status == "executed", "wazuh": wazuh_msg,
+            "audit": doc}
 
 
 # ----------------------------------------------------------------- triage API
@@ -426,6 +445,16 @@ def triage_set(req: TriageUpdate):
     except Exception:
         existing = {}
 
+    # The first close sets resolved_at; later edits to a closed alert (a note,
+    # an assignee) keep it, or MTTR would grow with every touch. Records closed
+    # before this field existed fall back to their last update.
+    closed = ("resolved", "false_positive")
+    resolved_at = None
+    if req.status in closed:
+        if existing.get("status") in closed:
+            resolved_at = existing.get("resolved_at") or existing.get("updated_at")
+        resolved_at = resolved_at or now
+
     doc = {
         "status": req.status,
         "assignee": req.assignee,
@@ -436,6 +465,7 @@ def triage_set(req: TriageUpdate):
         "alert_source": req.alert_source or existing.get("alert_source"),
         "created_at": existing.get("created_at", now),
         "updated_at": now,
+        "resolved_at": resolved_at,
     }
     client.index(index=TRIAGE_INDEX, id=req.alert_id, body=doc, refresh=True)
     return {"ok": True, "alert_id": req.alert_id, "triage": doc}
@@ -481,6 +511,8 @@ def metrics(hours: int = 168):
         {"range": {"timestamp": {"gte": start}}},
         {"range": {"rule.level": {"gte": 10}}},
     ])
+    # the all-levels volume, for the alert-fatigue comparison (R8)
+    rule_all = _count("wazuh-alerts-4.x-*", [{"range": {"timestamp": {"gte": start}}}])
     ai_total = _count("ai-detections-*", [{"range": {"timestamp": {"gte": start}}}])
 
     def _minutes(index, filters):
@@ -521,7 +553,8 @@ def metrics(hours: int = 168):
            and _in_window(t.get("alert_timestamp")):
             try:
                 a = datetime.fromisoformat(t["alert_timestamp"].replace("Z", "+00:00"))
-                r = datetime.fromisoformat(t["updated_at"].replace("Z", "+00:00"))
+                done = t.get("resolved_at") or t["updated_at"]   # pre-resolved_at records
+                r = datetime.fromisoformat(done.replace("Z", "+00:00"))
                 resolve_secs.append((r - a).total_seconds())
             except Exception:
                 pass
@@ -529,6 +562,7 @@ def metrics(hours: int = 168):
     return {
         "window_hours": hours,
         "rule_alerts": rule_total,
+        "rule_alerts_all_levels": rule_all,
         "ai_detections": ai_total,
         "overlap_minutes": {
             "both": len(rule_min & ai_min),

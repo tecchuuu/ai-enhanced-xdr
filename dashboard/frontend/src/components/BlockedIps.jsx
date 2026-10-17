@@ -9,6 +9,8 @@ import {
   EuiEmptyPrompt,
   EuiConfirmModal,
   EuiCallOut,
+  EuiBadge,
+  EuiToolTip,
 } from "@elastic/eui";
 import { getBlockedIps, unblockIp } from "../api";
 
@@ -19,6 +21,7 @@ export default function BlockedIps() {
   const [target, setTarget] = useState(null); // row pending unblock
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null); // unblock Wazuh didn't accept
 
   const load = useCallback(() => {
     getBlockedIps()
@@ -35,8 +38,16 @@ export default function BlockedIps() {
   const confirmUnblock = async () => {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await unblockIp({ agentId: target.agent_id, srcip: target.srcip });
+      const res = await unblockIp({ agentId: target.agent_id, srcip: target.srcip });
+      if (res.confirmed === false) {
+        setNotice(
+          `Wazuh did not confirm the unblock of ${target.srcip} on agent ${target.agent_id}. ` +
+            "The drop may still be in place, so it stays listed — remove it on the agent " +
+            "(iptables -D) or retry. Details are in the response log."
+        );
+      }
       setTarget(null);
       load();
     } catch (e) {
@@ -52,11 +63,23 @@ export default function BlockedIps() {
     { field: "since", name: "Blocked since", render: fmtTime, width: "180px" },
     { field: "alert_ref", name: "Triggered by", truncateText: true },
     {
+      name: "State",
+      width: "170px",
+      render: (row) =>
+        row.unblock_unconfirmed ? (
+          <EuiToolTip content="An unblock was sent but Wazuh did not accept it — the drop may still be in place on the agent.">
+            <EuiBadge color="warning">unblock unconfirmed</EuiBadge>
+          </EuiToolTip>
+        ) : (
+          <EuiBadge color="hollow">blocked</EuiBadge>
+        ),
+    },
+    {
       name: "Action",
-      width: "120px",
+      width: "140px",
       render: (row) => (
         <EuiButton size="s" color="text" onClick={() => setTarget(row)}>
-          Unblock
+          {row.unblock_unconfirmed ? "Retry unblock" : "Unblock"}
         </EuiButton>
       ),
     },
@@ -70,11 +93,23 @@ export default function BlockedIps() {
       <EuiText size="s" color="subdued">
         <p>
           Active <code>firewall-drop</code> blocks, derived from the response audit log.
-          Unblock is best-effort — Wazuh has no first-class API undo, so a persistent
-          drop may need removing on the agent.
+          Unblock is best-effort — Wazuh has no first-class API undo. If Wazuh does not
+          accept an unblock, the IP stays listed as <em>unblock unconfirmed</em>.
         </p>
       </EuiText>
       <EuiSpacer size="s" />
+      {notice && (
+        <>
+          <EuiCallOut
+            title={notice}
+            color="warning"
+            iconType="warning"
+            size="s"
+            onDismiss={() => setNotice(null)}
+          />
+          <EuiSpacer size="s" />
+        </>
+      )}
       {blocked?.length === 0 ? (
         <EuiEmptyPrompt
           iconType="check"

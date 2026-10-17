@@ -33,22 +33,29 @@ Every alert from `/api/alerts/*` now carries `id = "<source>:<opensearch _id>"`
   "alert_timestamp": "2026-08-27T10:00:00+00:00",
   "alert_source": "ai | rule",
   "created_at": "…",
-  "updated_at": "…"
+  "updated_at": "…",
+  "resolved_at": "… | null"
 }
 ```
 `alert_timestamp` / `alert_source` are copied from the alert at write time so
 `/api/metrics` can compute FP rate and MTTR without joining back to the alert
-indices.
+indices. `resolved_at` is set on the first move to `resolved` / `false_positive`
+and kept on later edits, so touching a closed alert's note doesn't stretch MTTR;
+it is cleared if the alert is reopened.
 
 ### `/api/metrics`
 - `rule_alerts` / `ai_detections` — counts in the window (rules: level ≥ 10).
+  `rule_alerts_all_levels` — rule volume at every level, for the alert-fatigue
+  comparison (R8). The Overview stat tiles read this endpoint for their range, so
+  Overview and Metrics show one definition of each number.
 - `overlap_minutes` — bucket both streams into 1-minute bins:
   - `ai_only` = minutes the model fired and no rule did → **this is the headline
     Claim B number, rendered live.**
   - `both` = corroboration, `rule_only` = rules alone.
 - `false_positive_rate` = FP-flagged AI detections ÷ AI detections in window.
-- `mttr_seconds` = mean(`updated_at` − `alert_timestamp`) over triage records in
-  `resolved` / `false_positive`.
+- `mttr_seconds` = mean(`resolved_at` − `alert_timestamp`) over triage records in
+  `resolved` / `false_positive` (records written before `resolved_at` existed
+  fall back to `updated_at`).
 
 ### `/api/explain` + `/api/explain/chat` (analyst assistant)
 `POST /api/explain {alert_id, provider?}` for an AI detection (`ai:<_id>`).
@@ -80,9 +87,10 @@ The flyout shows the explanation for AI alerts with an "Explain this detection" 
 
 1. **Unblock is best-effort.** Wazuh's manager API has no documented "undo
    firewall-drop". `POST /api/response/unblock-ip` attempts the paired delete
-   command and *always* records the intent so the console's block view stays
-   consistent — but a persistent drop may need `iptables -D` on the agent or a
-   custom delete AR. This is a Wazuh constraint, not a design gap.
+   command. If Wazuh does not accept it, the action is audited as `unconfirmed`
+   and the IP stays in **Currently blocked**, flagged *unblock unconfirmed*, rather
+   than being shown as unblocked — a persistent drop may need `iptables -D` on the
+   agent or a custom delete AR. This is a Wazuh constraint, not a design gap.
 2. **`ai.category.keyword`** — the category aggregation assumes dynamic mapping
    on `ai-detections-*`. If a later index template maps `ai.category` as a bare
    keyword, change the agg field in `_category_agg()`. Falls back to empty on
@@ -102,7 +110,12 @@ The flyout shows the explanation for AI alerts with an "Explain this detection" 
       high `both`; slow brute force = high `ai_only`).
 - [ ] `by_category` returns buckets (confirms the `.keyword` field assumption).
 - [ ] Block an IP from another host → it appears in **Currently blocked** →
-      unblock → it leaves the list and a `unblock-ip` row lands in the audit log.
+      unblock → it leaves the list and a `unblock-ip` row lands in the audit log
+      (or it stays, flagged *unblock unconfirmed*, if Wazuh rejects the delete).
+- [ ] A web detection (rule 100002) opens with its URL fields and model name in
+      the flyout, not "—".
+- [ ] Type a triage note, wait past a 15s refresh without saving → the note is
+      still there.
 - [ ] `POST /api/explain` on a real detection → text comes back, `ai.explanation`
       is persisted (re-open the flyout, it's still there), other `ai.*` fields
       intact. Then ask a follow-up in the panel → `/api/explain/chat` replies.

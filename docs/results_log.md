@@ -395,7 +395,7 @@ State these explicitly — they strengthen credibility rather than weaken it:
 3. **Short observation window.** Approximately 27 minutes of events (91 records). At 5-minute aggregation this yields only ~6 windows, below the sample size at which Isolation Forest output is statistically meaningful. The 05:24 false positive is a direct consequence.
 4. **Single host.** One monitored endpoint; no multi-agent or multi-user behavioural variation.
 5. **GPU used for the inference slot only.** The autoencoder now fits on the SIAM H100 (R14), but the rest of the chain — ingestion, Kafka, rules, dashboard — remains CPU, by design (§3 of the sponsor brief). NVIDIA Morpheus is the remaining GPU-native component.
-6. **BlueField-3 DPU unreachable.** The DPU is provisioned but cannot be managed — the host's `rshim` driver is broken, so nothing can be deployed onto its ARM complex. The network lane is therefore not demonstrated; if the fault is not resolved, the fallback is a software Zeek/Suricata sensor emitting the same EVE-JSON records, without hardware offload.
+6. **No network lane (out of scope).** The BlueField-3 DPU was provisioned but never reachable — the host's `rshim` driver is broken, so nothing could be deployed onto its ARM complex — and the network lane was subsequently ruled out of scope (2026-10-17, failure log Entry 32). Both detection lanes (auth, web) read endpoint logs, so the system has no network-flow view: its coverage spans log sources on the host, not layers.
 
 ---
 
