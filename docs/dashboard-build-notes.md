@@ -224,15 +224,16 @@ technique→tactic map (`AI_TACTICS`) for the AI heuristics' techniques.
 - [ ] Agent selector narrows both feeds and the Overview tiles.
 - [ ] Related events on a real AI detection list the sshd alerts from its IP;
       the IP pivot's first/last seen and accounts look right for the attacker.
-- [ ] `npm run build`, then open `http://<vm>:8000` → the console loads from the
-      API's port; a copied alert link reopens the same alert.
+- [ ] `docker compose … up -d --build` (SETUP §5), then open `http://<vm>:8000`
+      → the console (built inside the image) loads from the API's port; a
+      copied alert link reopens the same alert.
 - [ ] Set `DASHBOARD_API_KEY` → the console asks for it once; a browser without
       it gets nothing but `/api/health`.
 - [ ] Blocking the VM's own IP, the manager's, or an allowlisted address is
       refused with a reason in the response log; blocking an IP twice → 409.
-- [ ] Restart the consumers (`start_all.sh`) → the **Pipeline** page shows both
-      detectors `warming up`, then `running`; stop one → it turns `silent`
-      within ~3 minutes and Overview says so.
+- [ ] Restart the detectors (`… restart auth-detector web-detector`) → the
+      **Pipeline** page shows both `warming up`, then `running`; `… stop
+      web-detector` → it turns `silent` within ~3 minutes and Overview says so.
 - [ ] The next real AI detection has a **Why it fired** table with sensible
       medians, its real agent name, and an explanation (ollama) that quotes the
       recorded cutoff.

@@ -1,5 +1,33 @@
 # AI/streaming layer — deliberately separate from Wazuh's compose file so the
-# Wazuh base stack stays pristine and independently restartable.
+# Wazuh base stack stays pristine and independently restartable. Everything
+# after Wazuh runs here as a service: Kafka, Filebeat (Wazuh -> Kafka), the two
+# detectors and the API + console. `up -d --build` starts it all; there are no
+# processes to launch by hand.
+
+# Shared by api / auth-detector / web-detector: one image (../Dockerfile), run
+# three ways. Host networking, like Filebeat: Kafka advertises localhost, and
+# every address in dashboard/.env (OpenSearch, Wazuh API, Ollama on
+# localhost:<port>) works unchanged. The .env is mounted read-only — edit it,
+# then `restart` the service. Missing .env = refuse to start (create_host_path).
+x-ai-xdr: &ai-xdr
+  build:
+    context: ..
+  image: luckyfive/ai-xdr
+  restart: unless-stopped
+  network_mode: host
+  volumes:
+    - type: bind
+      source: ../dashboard/.env
+      target: /app/dashboard/.env
+      read_only: true
+      bind:
+        create_host_path: false
+  logging:                               # docker keeps logs forever by default
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   kafka:
     image: apache/kafka:3.9.0
@@ -58,6 +86,35 @@ services:
       - filebeat_data:/usr/share/filebeat/data    # registry: how far it has read
     depends_on:
       - kafka
+
+  # Kafka -> model -> ai-detections-*. Isolation Forest only in this image: the
+  # autoencoder / Morpheus models need torch + GPU (SETUP.md §7), so keep
+  # DETECTOR_MODEL unset or isolation_forest for these containers.
+  auth-detector:
+    <<: *ai-xdr
+    working_dir: /app/ai-stack/pipeline
+    command: ["python", "detection_consumer.py"]
+    depends_on:
+      - kafka
+
+  # web lane, on its own Kafka consumer group (see the module docstring)
+  web-detector:
+    <<: *ai-xdr
+    working_dir: /app/ai-stack/pipeline
+    command: ["python", "web_detection_consumer.py"]
+    depends_on:
+      - kafka
+
+  # API + the built console, one port: http://<host>:8000
+  api:
+    <<: *ai-xdr
+    working_dir: /app/dashboard
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:                         # shows (healthy) in `docker ps`
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   kafka_data:

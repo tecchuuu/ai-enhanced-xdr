@@ -65,7 +65,7 @@ Courtesy, not a dependency: tell the other group which ports you took.
 
 ## 2. Project + venv
 - `git clone <repo> && cd ai-enhanced-xdr`
-- `python3 -m venv ml-venv && ml-venv/bin/pip install -r requirements.txt`
+- Optional — the pipeline and API run in containers (§5). The venv is only for the offline tools in `scripts/` (model comparison, explainer test): `python3 -m venv ml-venv && ml-venv/bin/pip install -r requirements.txt`
 - Optional — the autoencoder model (`DETECTOR_MODEL=autoencoder`) needs PyTorch, kept out of `requirements.txt` so the base install stays light: `ml-venv/bin/pip install torch` (the default Linux build is CUDA-enabled → uses the H100). Isolation Forest needs no torch.
 
 ## 3. Wazuh stack
@@ -94,11 +94,29 @@ Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from
 - `DASHBOARD_API_KEY=<a long random string>` — the console asks for it once per browser (`openssl rand -hex 24` makes one).
 - `BLOCK_ALLOWLIST=<VM gateway IP>,<your workstation / VPN range>` — addresses the console refuses to block, on top of its built-in rules (loopback, the agent's and the manager's own IPs, your own address, non-routable ranges).
 
-Restart the API after editing (`start_all.sh` restarts everything).
+After editing, restart the services that read it (they load `.env` at startup):
 
-## 5. Kafka + pipeline
-- `(cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml up -d)` — Kafka plus **Filebeat**, which ships every Wazuh event from the manager's archive into Kafka (config + reasoning: `ai-stack/filebeat/filebeat.yml`). Run it from `ai-stack/` so compose reads `ai-stack/.env`. Wazuh (§3) must be up first: Filebeat reads the manager's log volume by name (`WAZUH_LOGS_VOLUME`, §0), and `up` refuses to start until it exists. That is deliberate — it can only ever read *our* manager's archive. The first `up` pulls the Filebeat image.
-- `./ai-stack/start_all.sh`  (uvicorn + the two detection consumers, via nohup; it also stops a leftover `archive_producer.py`, which would double every event)
+    (cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml restart api auth-detector web-detector)
+
+## 5. Kafka + pipeline + API (all containers)
+
+    (cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml up -d --build)
+
+That one command runs everything after Wazuh, from `ai-stack/ai-stack.yml`:
+
+| Service | What it is |
+|---|---|
+| `kafka` | the broker |
+| `filebeat` | ships every Wazuh event from the manager's archive into Kafka (`ai-stack/filebeat/filebeat.yml`) |
+| `auth-detector`, `web-detector` | the two detection consumers |
+| `api` | FastAPI + the built console on `:8000` |
+
+- **Order:** Wazuh (§3) and `dashboard/.env` (§4) first. Filebeat reads the manager's log volume by name (`WAZUH_LOGS_VOLUME`, §0) and `up` refuses to start until it exists — deliberate: it can only ever read *our* manager's archive. The detectors and API refuse to start without `dashboard/.env`.
+- **Run it from `ai-stack/`** so compose reads `ai-stack/.env`.
+- **First run** builds the `luckyfive/ai-xdr` image (repo-root `Dockerfile`: the console with Node, then Python + `requirements.txt`) — a few minutes, needs internet. **After `git pull`, run the same command again**: `--build` rebuilds what changed, and only the services whose image changed are restarted. Without `--build`, the containers keep running the old code.
+- **Every service restarts on its own** (`restart: unless-stopped`) after a crash or a VM reboot. Status: `docker compose -p luckyfive_kafka -f ai-stack.yml ps` (the API shows `healthy`). Logs: `… logs -f auth-detector` (or `api`, `filebeat`). Stop: `… down` (§8).
+- **Coming from `start_all.sh`** (removed): stop its processes once, or the old uvicorn keeps port 8000 and the API container can't start — `pkill -f '/LuckyFive/ai-enhanced-xdr/ml-venv/bin/(uvicorn|python -u)'` (the full path, so the other group's processes are never matched). `demo_run.sh` does this for you.
+- **Models:** the image has no PyTorch, so the containers run Isolation Forest. Leave `DETECTOR_MODEL` unset (or `isolation_forest`); the GPU models run from the Morpheus env (§7).
 - Check events reach Kafka: run this, then make any SSH login attempt on the VM. It prints one raw Wazuh event (JSON) or gives up after a minute:
 
       docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 --topic wazuh-archives --max-messages 1 --timeout-ms 60000
@@ -145,7 +163,7 @@ Run the three-model comparison (needs this env; the other two models run anywher
 ```
 python scripts/compare_models.py --models isolation_forest,autoencoder,morpheus_dfencoder
 ```
-To run the live consumer on Morpheus: `conda activate morpheus` then `DETECTOR_MODEL=morpheus_dfencoder python detection_consumer.py`. Takes ~25 min of installs end to end; the conda solve is the slow part.
+To run the live consumer on Morpheus: stop the container first (`(cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml stop auth-detector)` — both use the same Kafka consumer group, so Kafka would split the events between them), then `conda activate morpheus` and `DETECTOR_MODEL=morpheus_dfencoder python detection_consumer.py`. Takes ~25 min of installs end to end; the conda solve is the slow part.
 
 ## 8. When done
 - `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.

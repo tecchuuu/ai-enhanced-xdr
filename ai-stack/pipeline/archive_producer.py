@@ -2,8 +2,9 @@
 Streams Wazuh archive events into Kafka.
 
 SUPERSEDED (2026-10-18) by that second Filebeat: ai-stack/filebeat/filebeat.yml,
-a service in ai-stack.yml. start_all.sh no longer runs this. It stays only as a
-fallback until Filebeat has run on the VM, then can be deleted. Never run it
+a service in ai-stack.yml. Nothing starts this any more (it is not in the
+image); it stays only as a fallback, run by hand from ml-venv, until Filebeat
+has run on the VM — then delete it. Never run it
 alongside Filebeat (stop that first: docker compose -p luckyfive_kafka -f
 ai-stack.yml stop filebeat), or every event reaches Kafka twice.
 

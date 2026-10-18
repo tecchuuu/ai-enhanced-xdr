@@ -1,0 +1,10 @@
+# The image's build context is the repo root (see Dockerfile). Send only what
+# it uses — never ml-venv (gigabytes), node_modules, .git, or any .env.
+*
+!requirements.txt
+!dashboard
+!ai-stack/pipeline
+**/.env
+**/node_modules
+**/__pycache__
+dashboard/frontend/dist

@@ -89,6 +89,7 @@ def bye(*_):
 
 
 signal.signal(signal.SIGINT, bye)
+signal.signal(signal.SIGTERM, bye)      # docker stop
 
 
 def ingest(event):

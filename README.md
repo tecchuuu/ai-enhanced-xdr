@@ -37,7 +37,8 @@ docs/           architecture notes, results log, failure log
 
 ## Setup
 
-Requires Docker, Docker Compose, and Python 3.10+.
+Requires Docker and Docker Compose. Everything runs as containers; Python and
+Node on the host are only for the optional steps at the end.
 
 **1. Wazuh stack**
 ```bash
@@ -50,45 +51,37 @@ Dashboard: `https://localhost` (admin / SecretPassword — change before any rea
 
 **2. Deploy a Wazuh agent** on the endpoint you want to monitor, pointed at the manager. Enable `logall_json: yes` in `wazuh/config/wazuh_cluster/wazuh_manager.conf` (already set in this repo) so the archive captures every event, not just rule matches.
 
-**3. Kafka + Filebeat**
-```bash
-cd ../ai-stack
-docker compose -p luckyfive_kafka -f ai-stack.yml up -d
-```
-Filebeat ships every event from the manager's archive into Kafka. It reads the
-manager's log volume, `luckyfive_wazuh_wazuh_logs` — after a different `-p` in
-step 1, set `WAZUH_LOGS_VOLUME` in `ai-stack/.env`.
-
-**4. Python environment**
-```bash
-python3 -m venv ml-venv
-source ml-venv/bin/activate
-pip install -r requirements.txt
-```
-
-**5. Credentials**
+**3. Credentials**
 ```bash
 cp dashboard/.env.example dashboard/.env
 # fill in the Wazuh API + OpenSearch credentials
 ```
 
-**6. Run the pipeline + API** (or run the same commands by hand)
+**4. Everything after Wazuh**
 ```bash
-./ai-stack/start_all.sh
+cd ../ai-stack
+docker compose -p luckyfive_kafka -f ai-stack.yml up -d --build
 ```
-That starts the API and the detection consumers; Filebeat from step 3 already
-feeds them.
+Five services from `ai-stack/ai-stack.yml`: Kafka, **Filebeat** (manager
+archive → Kafka), the **auth** and **web detectors**, and the **API**, which
+also serves the console: `http://<host>:8000`. The first run builds the image
+(`Dockerfile`: console + Python, a few minutes). After pulling new code, run the
+same command — `--build` rebuilds only what changed. After editing
+`dashboard/.env`, `restart` instead. Logs: `docker compose -p luckyfive_kafka
+-f ai-stack.yml logs -f auth-detector` (or `api`, `filebeat`, …).
 
-**7. SOC console** (requires Node 18+)
+Filebeat reads the manager's log volume, `luckyfive_wazuh_wazuh_logs` — after a
+different `-p` in step 1, set `WAZUH_LOGS_VOLUME` in `ai-stack/.env`.
+
+**Optional — console development** (Node 20.19+): `cd dashboard/frontend &&
+npm install && npm run dev` serves it on `:5173` with live reload and proxies
+`/api` to `:8000` (`API_TARGET=http://host:port npm run dev` if the API is
+elsewhere).
+
+**Optional — offline scripts** (`scripts/`: model comparison, explainer test):
 ```bash
-cd dashboard/frontend
-npm install
-npm run build
+python3 -m venv ml-venv && ml-venv/bin/pip install -r requirements.txt
 ```
-The API from step 6 then serves the console too: `http://<host>:8000` — one
-port, no separate frontend process. Rebuild after pulling frontend changes. For
-live editing, `npm run dev` serves it on `:5173` instead and proxies `/api` to
-`:8000` (`API_TARGET=http://host:port npm run dev` if the API is elsewhere).
 
 The console is a Wazuh-style UI (same EUI component library)
 with rule + AI alerts, a shared time range and agent filter, server-side search
