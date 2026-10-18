@@ -21,10 +21,10 @@ for _ in $(seq 1 36); do
   sleep 5
 done
 
-echo "[3/4] Kafka + pipeline (fresh consumers, no state from earlier runs)"
+echo "[3/4] Kafka + Filebeat + pipeline (fresh consumers, no state from earlier runs)"
 (cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml up -d)
 sleep 10
-pkill -f "uvicorn|archive_producer|detection_consumer|web_detection_consumer" 2>/dev/null || true
+pkill -f "uvicorn|detection_consumer|web_detection_consumer" 2>/dev/null || true
 sleep 2
 bash ai-stack/start_all.sh > /dev/null
 

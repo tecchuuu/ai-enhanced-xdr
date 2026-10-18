@@ -37,6 +37,7 @@ Working set that avoids those:
 | `wazuh/.env` | `WAZUH_API_PORT` | 55001 |
 | `wazuh/.env` | `INDEXER_PASSWORD` | your admin password |
 | `ai-stack/.env` | `KAFKA_HOST_PORT` | 29092 |
+| `ai-stack/.env` | `WAZUH_LOGS_VOLUME` | empty (= `luckyfive_wazuh_wazuh_logs`, matches `-p luckyfive_wazuh`) |
 | `dashboard/.env` | `OS_PORT` | 9202 |
 | `dashboard/.env` | `KAFKA_BOOTSTRAP` | localhost:29092 |
 | `dashboard/.env` | `WAZUH_API_URL` | https://localhost:55001 |
@@ -87,7 +88,7 @@ The console's **Agents** page then lists `luckyfive-agent` as active. The key li
     cp dashboard/.env.example dashboard/.env
 Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from step 3>`,
 `EXPLAINER_PROVIDER=ollama`, `OLLAMA_MODEL=llama3.2` (no ANTHROPIC key),
-`WAZUH_CONTAINER=luckyfive_wazuh-wazuh.manager-1` (must match your `-p` name so the producer tails YOUR manager, never the other group's).
+`WAZUH_CONTAINER=luckyfive_wazuh-wazuh.manager-1` (only for the old `archive_producer.py`, kept as a fallback; Filebeat finds your manager by its log volume instead, §5).
 
 **Shared box → lock the console down.** The API listens on `0.0.0.0:8000` and can push firewall blocks to agents, so anyone on the VM's network — the other group included — could call it. In the same `.env`:
 - `DASHBOARD_API_KEY=<a long random string>` — the console asks for it once per browser (`openssl rand -hex 24` makes one).
@@ -96,8 +97,13 @@ Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from
 Restart the API after editing (`start_all.sh` restarts everything).
 
 ## 5. Kafka + pipeline
-- `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml up -d`
-- `./ai-stack/start_all.sh`  (uvicorn + producer + consumer, via nohup)
+- `(cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml up -d)` — Kafka plus **Filebeat**, which ships every Wazuh event from the manager's archive into Kafka (config + reasoning: `ai-stack/filebeat/filebeat.yml`). Run it from `ai-stack/` so compose reads `ai-stack/.env`. Wazuh (§3) must be up first: Filebeat reads the manager's log volume by name (`WAZUH_LOGS_VOLUME`, §0), and `up` refuses to start until it exists. That is deliberate — it can only ever read *our* manager's archive. The first `up` pulls the Filebeat image.
+- `./ai-stack/start_all.sh`  (uvicorn + the two detection consumers, via nohup; it also stops a leftover `archive_producer.py`, which would double every event)
+- Check events reach Kafka: run this, then make any SSH login attempt on the VM. It prints one raw Wazuh event (JSON) or gives up after a minute:
+
+      docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 --topic wazuh-archives --max-messages 1 --timeout-ms 60000
+
+  Nothing → `docker logs luckyfive_kafka-filebeat-1`. Filebeat remembers how far it has read (the `filebeat_data` volume), so restarting it doesn't lose or replay events; its very first start begins at the end of today's archive, like the old producer.
 
 ## 6. Ollama (LLM explainer — R15)
 - `curl -fsSL https://ollama.com/install.sh | sh`

@@ -11,7 +11,7 @@ The CPU implementation (Isolation Forest) is the proof of method; NVIDIA Morpheu
 ```
 Endpoint → Wazuh Agent → Wazuh Manager → archives.json
                                               │
-                                    archive_producer.py (tail -F)
+                                    Filebeat (Kafka output)
                                               │
                                          Apache Kafka
                                               │
@@ -44,17 +44,20 @@ Requires Docker, Docker Compose, and Python 3.10+.
 cd wazuh
 docker compose -f generate-indexer-certs.yml run --rm generator
 sudo sysctl -w vm.max_map_count=262144
-docker compose up -d
+docker compose -p luckyfive_wazuh up -d
 ```
 Dashboard: `https://localhost` (admin / SecretPassword — change before any real use)
 
 **2. Deploy a Wazuh agent** on the endpoint you want to monitor, pointed at the manager. Enable `logall_json: yes` in `wazuh/config/wazuh_cluster/wazuh_manager.conf` (already set in this repo) so the archive captures every event, not just rule matches.
 
-**3. Kafka**
+**3. Kafka + Filebeat**
 ```bash
 cd ../ai-stack
-docker compose -f ai-stack.yml up -d
+docker compose -p luckyfive_kafka -f ai-stack.yml up -d
 ```
+Filebeat ships every event from the manager's archive into Kafka. It reads the
+manager's log volume, `luckyfive_wazuh_wazuh_logs` — after a different `-p` in
+step 1, set `WAZUH_LOGS_VOLUME` in `ai-stack/.env`.
 
 **4. Python environment**
 ```bash
@@ -73,8 +76,8 @@ cp dashboard/.env.example dashboard/.env
 ```bash
 ./ai-stack/start_all.sh
 ```
-The producer tails the archive via `docker exec`, so the user needs docker
-access (`sudo usermod -aG docker $USER`, then re-login).
+That starts the API and the detection consumers; Filebeat from step 3 already
+feeds them.
 
 **7. SOC console** (requires Node 18+)
 ```bash

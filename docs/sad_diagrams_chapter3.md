@@ -54,7 +54,7 @@ flowchart TD
     P1["1.0<br/>Log Collection<br/><i>wazuh-agent</i>"]
     P2["2.0<br/>Decode &<br/>Rule Analysis<br/><i>analysisd</i>"]
     P3["3.0<br/>Event Archiving<br/><i>logall_json</i>"]
-    P4["4.0<br/>Stream Publishing<br/><i>archive_producer.py</i>"]
+    P4["4.0<br/>Stream Publishing<br/><i>Filebeat</i>"]
     P5["5.0<br/>Feature Engineering<br/>& Inference<br/><i>detection_consumer.py</i>"]
     P6["6.0<br/>Alert Storage<br/><i>OpenSearch</i>"]
     P7["7.0<br/>Presentation<br/><i>FastAPI + dashboard</i>"]
@@ -71,7 +71,7 @@ flowchart TD
     P2 -->|"ALL decoded events<br/>(matched + unmatched)"| P3
 
     P3 --> D1
-    D1 -->|"tail -F"| P4
+    D1 -->|"read (filestream)"| P4
     P4 --> D2
     D2 -->|"consume"| P5
 
@@ -103,7 +103,9 @@ The AI branch (3.0 → 4.0 → 5.0) consumes the **archive**, not the alerts. If
 
 ### Implementation note for §3.3
 
-Process **4.0** is performed by a Python tailer rather than Filebeat. Filebeat supports a single output at a time and is already configured to ship to the indexer; adding a Kafka output would require replacing the indexer output (disabling the Wazuh dashboard) or running a second Filebeat instance. A production deployment would use the second-instance approach.
+Process **4.0** is a **second Filebeat instance** with a Kafka output, in its own container. The manager's built-in Filebeat cannot do it: Filebeat supports a single output at a time and that one already ships rule alerts to the indexer, so adding Kafka there would mean dropping the indexer output (and with it the Wazuh dashboard). The second instance reads the manager's archive from its log volume, read-only.
+
+Until 2026-10-18 a Python tailer (`archive_producer.py`, `tail -F` via `docker exec`) stood in for it. It was replaced because it only read new lines from the moment it started: events written while it was down never reached Kafka. Filebeat records its read position and resumes from it.
 
 ---
 
@@ -233,7 +235,6 @@ State these in §3.3 so the built system and the documented design agree.
 
 | Proposal (Figure 3.1) | As built | Reason |
 |---|---|---|
-| Filebeat → Kafka | Python tailer → Kafka | Filebeat supports one output; already shipping to the indexer. Production would run a second Filebeat instance. |
 | Morpheus performs inference | Isolation Forest on CPU (core build); Morpheus deployment on provided H100 (Sep–Nov 2026) | Original local GPU (AMD RX 5700 XT) could not run CUDA, so the method was first proven on CPU. SIAM AI then provided an H100 80GB, so Morpheus moves from documented target to actual deployment. The CPU implementation stands as the equivalence baseline. |
 | Triton in the data path | Not implemented | Triton is a model-serving service invoked by request/response, not a stage data flows through. Correction already applied to §3.3. |
 | AI alerts returned via Wazuh REST API | Written directly to OpenSearch (`ai-detections-*`) | The REST API on port 55000 is a management interface, not an alert-ingestion path. |

@@ -1,6 +1,12 @@
 """
 Streams Wazuh archive events into Kafka.
 
+SUPERSEDED (2026-10-18) by that second Filebeat: ai-stack/filebeat/filebeat.yml,
+a service in ai-stack.yml. start_all.sh no longer runs this. It stays only as a
+fallback until Filebeat has run on the VM, then can be deleted. Never run it
+alongside Filebeat (stop that first: docker compose -p luckyfive_kafka -f
+ai-stack.yml stop filebeat), or every event reaches Kafka twice.
+
 Substitutes for Filebeat because Filebeat supports only one output at a time and
 is already shipping to the Wazuh indexer. Production equivalent = a second Filebeat
 instance with a Kafka output.

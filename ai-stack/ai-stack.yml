@@ -40,5 +40,32 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
 
+  # Wazuh -> Kafka: ships every event from the manager's archive into the
+  # wazuh-archives topic. Config and reasoning: filebeat/filebeat.yml.
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.17.0
+    restart: unless-stopped
+    user: root                       # to read the manager's files whatever uid owns them
+    # -e: log to `docker logs`; strict.perms off because the mounted config is
+    # owned by the host user, not root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    network_mode: host               # Kafka advertises localhost:<port>
+    environment:
+      KAFKA_HOST_PORT: ${KAFKA_HOST_PORT:-9092}
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - wazuh_logs:/var/ossec/logs:ro
+      - filebeat_data:/usr/share/filebeat/data    # registry: how far it has read
+    depends_on:
+      - kafka
+
 volumes:
   kafka_data:
+  filebeat_data:
+  # The Wazuh manager's log volume, created by the Wazuh compose project as
+  # <project>_wazuh_logs. Naming it explicitly pins Filebeat to OUR manager on
+  # the shared VM: a wrong name fails `up` instead of reading another group's.
+  # So bring Wazuh up first.
+  wazuh_logs:
+    external: true
+    name: ${WAZUH_LOGS_VOLUME:-luckyfive_wazuh_wazuh_logs}

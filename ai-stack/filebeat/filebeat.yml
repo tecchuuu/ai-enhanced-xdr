@@ -1,0 +1,33 @@
+# Ships every Wazuh event into Kafka, unchanged: one line of the manager's
+# archive (logall_json) = one message on wazuh-archives, exactly what the
+# detection consumers parse. Replaces ai-stack/pipeline/archive_producer.py.
+#
+# Why a second Filebeat: the one inside the manager container already ships
+# rule alerts to the indexer, and a Filebeat has only one output.
+#
+# Unlike the producer's `tail -n 0`, Filebeat records how far it has read (its
+# registry, in the filebeat_data volume), so events Wazuh writes while it is
+# down are sent when it comes back instead of being lost.
+
+filebeat.inputs:
+  - type: filestream
+    id: wazuh-archives        # the registry is keyed by this — don't rename it
+    paths:
+      # one file per UTC day, e.g. archives/2026/Oct/ossec-archive-18.json;
+      # the new day's file is picked up within 10 s and read from its start
+      - /var/ossec/logs/archives/*/*/ossec-archive-*.json
+    # Very first start only: begin at the END of the files already there, as
+    # the producer did, rather than replaying today's archive into Kafka (the
+    # detectors would flag old windows again). Later starts resume from the
+    # registry.
+    ignore_inactive: since_first_start
+
+output.kafka:
+  # Host networking: the broker advertises localhost:<its port>. The port is
+  # KAFKA_HOST_PORT from ai-stack/.env — the same value Kafka binds — so the
+  # two can't disagree.
+  hosts: ["localhost:${KAFKA_HOST_PORT}"]
+  topic: wazuh-archives
+  # the line as-is, not wrapped in Filebeat's own JSON envelope
+  codec.format:
+    string: '%{[message]}'

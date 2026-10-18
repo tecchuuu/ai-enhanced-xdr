@@ -24,7 +24,7 @@ SETUP (state in the report):
     data.url. This consumer falls back to parsing full_log if those are absent.
 """
 
-import json, os, re, signal, sys, time
+import os, re, signal, sys, time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +35,8 @@ from kafka import KafkaConsumer
 from models import get_model
 from opensearchpy import OpenSearch, helpers
 
-from consumer_common import (ai_index, fit_evidence, heartbeat, note_agent,
-                             top_agent, window_features)
+from consumer_common import (ai_index, decode_event, fit_evidence, heartbeat,
+                             note_agent, top_agent, window_features)
 
 # one credential source for the whole project: dashboard/.env (git-ignored)
 load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
@@ -75,7 +75,7 @@ consumer = KafkaConsumer(
     auto_offset_reset="latest",          # only new events
     group_id="xdr-web-detector",         # distinct from the auth consumer's group
     consumer_timeout_ms=1000,            # so the loop can breathe and score on schedule
-    value_deserializer=lambda v: json.loads(v.decode()),
+    value_deserializer=decode_event,     # None for a line that isn't JSON
 )
 
 os_client = OpenSearch(
@@ -111,6 +111,8 @@ signal.signal(signal.SIGINT, bye)
 def ingest(event):
     """Fold one Wazuh web event into its time window; return True if it was one."""
     global last_event_at
+    if event is None:                    # undecodable line (decode_event)
+        return False
     ts = event.get("timestamp")
     if not ts:
         return False

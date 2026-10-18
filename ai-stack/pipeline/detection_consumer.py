@@ -16,7 +16,7 @@ because the dataset is small and the baseline is short-lived. The architecture i
 equivalent; the separation is a scale concern, not a correctness one.
 """
 
-import json, os, re, signal, sys, time
+import os, re, signal, sys, time
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -31,8 +31,8 @@ from kafka import KafkaConsumer
 from models import get_model
 from opensearchpy import OpenSearch, helpers
 
-from consumer_common import (ai_index, fit_evidence, heartbeat, note_agent,
-                             top_agent, window_features)
+from consumer_common import (ai_index, decode_event, fit_evidence, heartbeat,
+                             note_agent, top_agent, window_features)
 
 # ----------------------------------------------------------------- config
 # Kafka's address is configurable: on a shared VM another group's broker may own
@@ -62,7 +62,7 @@ consumer = KafkaConsumer(
     auto_offset_reset="latest",          # only new events
     group_id="xdr-detector",
     consumer_timeout_ms=1000,            # so the loop can breathe and score on schedule
-    value_deserializer=lambda v: json.loads(v.decode()),
+    value_deserializer=decode_event,     # None for a line that isn't JSON
 )
 
 os_client = OpenSearch(
@@ -94,6 +94,8 @@ signal.signal(signal.SIGINT, bye)
 def ingest(event):
     """Fold one Wazuh event into its time window."""
     global last_event_at
+    if event is None:                    # undecodable line (decode_event)
+        return
     ts = event.get("timestamp")
     if not ts:
         return

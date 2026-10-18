@@ -11,11 +11,25 @@ Two things every detector writes, whatever its features:
                scoring, how much it has seen). The dashboard's Pipeline page
                reads these, so a quiet console can be told apart from a dead
                consumer.
+
+Plus decode_event, the Kafka deserializer both use.
 """
 
+import json
 from datetime import datetime, timezone
 
 STATUS_INDEX = "ai-pipeline-status"
+
+
+def decode_event(raw):
+    """Kafka message value -> event dict, or None for a line that isn't one
+    (partial or garbled). Filebeat forwards archive lines as-is, so a bad line
+    gets dropped here; raising instead would kill the consumer loop."""
+    try:
+        event = json.loads(raw)
+    except ValueError:                   # bad JSON, and bad UTF-8 too
+        return None
+    return event if isinstance(event, dict) else None
 
 
 def _num(v):
