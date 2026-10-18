@@ -391,6 +391,13 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
 - **Decision:** dropped, not substituted — the software fallback recorded in Entry 27 (Suricata/Zeek on the host) is not pursued either. Docs that promised the lane (README, SETUP, ROADMAP, project plan) now say out of scope; Entries 18 and 27 are left as written, since they record what was true at the time.
 - **Consequence:** both detection lanes (auth, web) read endpoint logs, so coverage is across log sources on the host, not across layers (endpoint + network). Stated as Known limitation 6 in `results_log.md`.
 
+### Entry 33 — Our agent had been reporting to the other group's manager for a week (2026-10-18)
+- The console's Agents page showed the VM's agent (id 003) **disconnected since 2026-10-11 13:37**, while SSH-based AI detections kept arriving — so nothing looked broken on the detection side.
+- Cause: on 10-11 our manager moved to host ports 1516/1517 (Entry 31), but the VM's agent (`/var/ossec/etc/ossec.conf`) still dialed **1514** — the other group's manager. `ss -tnp` showed `wazuh-agentd` with an **established** connection to `127.0.0.1:1514`, and its log was clean (scans running, no connection errors): it was working, just for the other stack.
+- Why detection never noticed: our manager reads the host's `auth.log` directly (a bind mount, `host_auth.log`), so the SSH lane never depended on the agent. What *was* lost: Block IP (Active Response runs on the agent), FIM / rootcheck / SCA / inventory for the host.
+- **Decision:** leave the host agent with the other group (one machine runs one native agent; one agent reports to one manager — re-pointing it would silently cut them off) and run **our own agent in a container** (`wazuh.agent` in `wazuh/docker-compose.yml`, SETUP §3b): enrolls on 1517 as `luckyfive-agent`, host networking + `NET_ADMIN` so blocks land in the VM's firewall, Active Response only.
+- **Lesson:** Entry 31 again, one layer down — a shared host's *agent* is shared infrastructure just like its ports, and a component can be fully healthy while serving the wrong owner. The signal was in our own console (Agents: disconnected) a week before anyone looked; the Pipeline page added in batch 4 now surfaces this class of thing next to the detectors.
+
 ## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live; Morpheus in the slot)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**

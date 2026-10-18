@@ -19,10 +19,13 @@ export default function BlockIpModal({ srcip, alertRef, defaultAgentName, onClos
   useEffect(() => {
     getAgents()
       .then(({ agents }) => {
-        // the manager (000) can't run agent-side firewall-drop on endpoints
-        const real = agents.filter((a) => a.id !== "000");
+        // the manager (000) can't run agent-side firewall-drop on endpoints;
+        // active agents first — a disconnected one can't receive the block
+        const real = agents
+          .filter((a) => a.id !== "000")
+          .sort((a, b) => (b.status === "active") - (a.status === "active"));
         setAgents(real);
-        const match = real.find((a) => a.name === defaultAgentName);
+        const match = real.find((a) => a.name === defaultAgentName && a.status === "active");
         setAgentId((match ?? real[0])?.id ?? "");
       })
       .catch((e) => setError(String(e.message ?? e)));

@@ -48,10 +48,11 @@ directory of the compose file, so run compose from `wazuh/` and `ai-stack/`.
 - `KAFKA_HOST_PORT` and `KAFKA_BOOTSTRAP` must agree. Kafka advertises its port
   to clients, so a mismatch redirects them after connecting. The consumers print
   the broker address at startup — read that line.
-- **The agent must be told the new manager port.** It defaults to 1514, which is
-  the *other group's* manager. On the monitored host edit `<port>` in
-  `/var/ossec/etc/ossec.conf` to `WAZUH_AGENT_PORT` and restart `wazuh-agent`,
-  or it will register with the wrong stack.
+- **Don't touch the VM's own Wazuh agent** (`/var/ossec`, the `wazuh-agent`
+  service). It reports to the *other group's* manager on 1514, and an agent can
+  only report to one manager — re-pointing it to yours silently cuts theirs off
+  (found 2026-10-18: it had sat on 1514 since our 10-11 port move). Ours is a
+  separate agent in a container, part of our compose stack — see §3b.
 
 Courtesy, not a dependency: tell the other group which ports you took.
 
@@ -69,6 +70,18 @@ Courtesy, not a dependency: tell the other group which ports you took.
 ## 3. Wazuh stack
 - `cd wazuh && docker compose -p luckyfive_wazuh up -d`  (`-p` optional; namespaces your containers)
 - Change the admin password: `hash.sh` → put hash in `internal_users.yml` → recreate indexer → `securityadmin.sh -f ... -t internalusers`. (See failure_log for the exact sequence + the bind-mount gotcha.)
+
+## 3b. Our agent (container)
+The `wazuh.agent` service in `wazuh/docker-compose.yml` is our group's agent: it enrolls with our manager on `WAZUH_ENROLL_PORT` and reports on `WAZUH_AGENT_PORT` as `luckyfive-agent`, so the VM's host agent stays with the other group. It comes up with the rest of the stack (the first `up` builds it — needs internet for Wazuh's apt repo). It runs Active Response only — the console's **Block IP** — on host networking, so blocks land in the VM's firewall (keep `BLOCK_ALLOWLIST` set, §4: a block affects the whole shared VM). SSH events don't need it; the manager reads the host's auth log directly.
+
+Already-running stack, bring up just the agent:
+
+    cd wazuh && docker compose -p luckyfive_wazuh up -d --build wazuh.agent
+    docker logs -f luckyfive_wazuh-wazuh.agent-1      # want: Connected to the server ([127.0.0.1]:1516/tcp)
+
+The console's **Agents** page then lists `luckyfive-agent` as active. The key lives in the `wazuh_agent_etc` volume, so restarts reuse it; deleting that volume re-enrolls under a new id. Optional tidy-up — remove the stale host-agent record (id 003) from *our* manager; it doesn't affect the other group's:
+
+    docker exec luckyfive_wazuh-wazuh.manager-1 /var/ossec/bin/manage_agents -r 003
 
 ## 4. .env (secrets — not in git)
     cp dashboard/.env.example dashboard/.env

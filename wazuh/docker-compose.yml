@@ -100,7 +100,32 @@ services:
       - wazuh.indexer:wazuh.indexer
       - wazuh.manager:wazuh.manager
 
+  # Our own agent, in a container. The VM's host agent (/var/ossec on the VM)
+  # reports to the other group's Wazuh on 1514; a machine runs one native agent
+  # and an agent reports to one manager, so ours lives here instead and neither
+  # group ever re-points the other's. Host networking + NET_ADMIN so the
+  # console's Block IP (firewall-drop) lands in the VM's firewall, not the
+  # container's. Config + reasoning: agent/entrypoint.sh, SETUP.md §3b.
+  wazuh.agent:
+    build: ./agent
+    image: luckyfive/wazuh-agent:4.14.1
+    restart: always
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - MANAGER_ADDRESS=127.0.0.1
+      - MANAGER_PORT=${WAZUH_AGENT_PORT:-1514}
+      - ENROLL_PORT=${WAZUH_ENROLL_PORT:-1515}
+      - AGENT_NAME=${WAZUH_AGENT_NAME:-luckyfive-agent}
+    volumes:
+      - wazuh_agent_etc:/var/ossec/etc   # keeps the enrollment key across restarts
+    depends_on:
+      - wazuh.manager
+
 volumes:
+  wazuh_agent_etc:
   wazuh_api_configuration:
   wazuh_etc:
   wazuh_logs:
