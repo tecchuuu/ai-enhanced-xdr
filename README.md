@@ -113,7 +113,8 @@ Full reasoning is in `docs/`: `project_plan.md` (original architecture plan),
 `failure_log.md` (every error, dead end, and decision with rationale),
 `results_log.md` (claims, metrics, and evidence), `ROADMAP.md` (what's next and
 how the deferred pieces attach), `dashboard-build-notes.md` (console additions
-and their contracts). Deploying on the SIAM VM: `SETUP.md`.
+and their contracts), `security.md` (what the console protects against, known
+gaps, production tiering). Deploying on the SIAM VM: `SETUP.md`.
 
 **Test traffic:** attack scenarios were generated with local scripts (not
 committed) — any SSH brute-force source works to reproduce, e.g. repeated
