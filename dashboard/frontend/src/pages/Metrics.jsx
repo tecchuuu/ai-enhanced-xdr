@@ -6,8 +6,8 @@ import {
   EuiFlexGroup,
   EuiFlexItem,
   EuiText,
-  EuiTitle,
   EuiCallOut,
+  EuiAccordion,
 } from "@elastic/eui";
 import { getMetrics } from "../api";
 import { usePolling } from "../lib/usePolling";
@@ -59,15 +59,6 @@ export default function Metrics({ scope }) {
 
   return (
     <>
-      <EuiText size="s" color="subdued">
-        <p>
-          The live version of the rule-vs-AI comparison. <strong>Minutes AI-only</strong> is
-          the headline: windows the anomaly model flagged while the signature ruleset stayed
-          silent — the value the AI layer adds. False-positive rate and MTTR come from analyst
-          triage on the AI detections.
-        </p>
-      </EuiText>
-      <EuiSpacer size="s" />
 
       {error && (
         <>
@@ -96,36 +87,43 @@ export default function Metrics({ scope }) {
         ))}
       </EuiFlexGroup>
 
+      {m?.ai_by_model?.length > 0 && (
+        <>
+          <EuiSpacer size="s" />
+          <EuiText size="s" color="subdued">
+            <p>
+              AI detections by model:{" "}
+              {m.ai_by_model.map((x) => `${x.model} ${x.count}`).join(" · ")}
+            </p>
+          </EuiText>
+        </>
+      )}
+
       <EuiSpacer />
-      <EuiPanel hasBorder color="subdued">
-        <EuiTitle size="xxs">
-          <h3>How to read this</h3>
-        </EuiTitle>
-        <EuiSpacer size="s" />
-        <EuiText size="s">
-          <ul>
-            <li>
-              <strong>Rules-only vs rules+AI:</strong> rules caught {m?.rule_alerts ?? "—"};
-              the AI added {o.ai_only ?? "—"} minute-windows on top that rules missed.
-            </li>
-            <li>
-              <strong>Overlap ({o.both ?? "—"} min):</strong> both systems firing in the same
-              minute — corroboration, not new coverage.
-            </li>
-            <li>
-              <strong>{m?.triaged ?? 0} detections triaged</strong> — FP rate and MTTR are only
-              meaningful once analysts have worked the queue.
-            </li>
-            {m?.ai_by_model?.length > 0 && (
+      <EuiPanel hasBorder color="subdued" paddingSize="s">
+        <EuiAccordion id="metrics-how-to-read" buttonContent="How to read this" paddingSize="s">
+          <EuiText size="s">
+            <ul>
               <li>
-                <strong>By model:</strong>{" "}
-                {m.ai_by_model.map((x) => `${x.model} ${x.count}`).join(" · ")} — which
-                occupant of the swappable inference slot produced the detections in this
-                range.
+                <strong>Minutes AI-only</strong> is the headline: minutes the anomaly model
+                flagged while the signature ruleset stayed silent — the value the AI layer adds.
               </li>
-            )}
-          </ul>
-        </EuiText>
+              <li>
+                <strong>Rules-only vs rules+AI:</strong> rules caught {m?.rule_alerts ?? "—"};
+                the AI added {o.ai_only ?? "—"} minute-windows on top that rules missed.
+              </li>
+              <li>
+                <strong>Overlap ({o.both ?? "—"} min):</strong> both systems firing in the same
+                minute — corroboration, not new coverage.
+              </li>
+              <li>
+                <strong>{m?.triaged ?? 0} alerts triaged</strong> in this range — FP rate and
+                MTTR come from analyst triage on the AI detections, so they only mean something
+                once the queue has been worked.
+              </li>
+            </ul>
+          </EuiText>
+        </EuiAccordion>
       </EuiPanel>
     </>
   );

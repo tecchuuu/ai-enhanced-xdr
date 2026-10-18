@@ -1,5 +1,6 @@
 import { EuiBadge } from "@elastic/eui";
 import { usePalette } from "../theme/ThemeProvider";
+import Dot from "./Dot";
 
 // source of a detection: Wazuh ruleset vs the AI pipeline.
 // The label carries the identity; the color only reinforces it.
@@ -20,16 +21,18 @@ export function severityName(level) {
   return "low";
 }
 
-// Only the top two tiers are filled. Color earns attention by being rare — when
-// every row is a saturated badge, none of them read as urgent.
+// Only critical is filled. Color earns attention by being rare — when every row
+// is a saturated badge, none of them read as urgent. High is a quiet badge with
+// a red dot: two filled reds (EUI danger and palette.high) were too close to
+// tell apart, so the tiers now differ in fill, not just in shade.
 export function SeverityBadge({ level }) {
   const p = usePalette();
   if (level == null) return <EuiBadge color="hollow">—</EuiBadge>;
   const name = severityName(level);
-  const color =
-    name === "critical" ? "danger" : name === "high" ? p.high : "hollow";
+  if (name === "critical") return <EuiBadge color="danger">critical ({level})</EuiBadge>;
   return (
-    <EuiBadge color={color}>
+    <EuiBadge color="hollow">
+      {name === "high" && <Dot color={p.high} />}
       {name} ({level})
     </EuiBadge>
   );

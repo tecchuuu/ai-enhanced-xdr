@@ -14,6 +14,7 @@ import {
 import { getPipelineStatus } from "../api";
 import { usePolling } from "../lib/usePolling";
 import { fmtAgo, fmtTime } from "../lib/format";
+import PanelTitle from "../components/PanelTitle";
 
 // A detector's state as the heartbeat reports it, unless it has gone quiet.
 function detectorHealth(c) {
@@ -102,16 +103,10 @@ export default function Pipeline() {
       </EuiFlexGrid>
 
       <EuiSpacer />
-      <EuiTitle size="xs">
-        <h2>Detectors</h2>
-      </EuiTitle>
-      <EuiText size="s" color="subdued">
-        <p>
-          Each detection consumer reports a heartbeat every scoring cycle (60s). A detector
-          that misses three counts as silent — no AI detections from it means it isn&rsquo;t
-          running, not that nothing happened.
-        </p>
-      </EuiText>
+      <PanelTitle
+        title="Detectors"
+        info="Each detection consumer reports a heartbeat every scoring cycle (60s). A detector that misses three counts as silent — no AI detections from it then means it isn't running, not that nothing happened."
+      />
       <EuiSpacer size="s" />
       {s.consumers.length === 0 ? (
         <EuiEmptyPrompt

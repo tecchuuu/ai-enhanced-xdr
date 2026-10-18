@@ -1,19 +1,20 @@
 import { useState } from "react";
-import { EuiSpacer, EuiTitle, EuiPanel, EuiText, EuiFlexGroup, EuiFlexItem } from "@elastic/eui";
+import { EuiSpacer, EuiPanel, EuiFlexGroup, EuiFlexItem } from "@elastic/eui";
 import { getHistogram, getTopSrcIps, getMetrics, getCombined } from "../api";
 import { usePolling } from "../lib/usePolling";
 import { scopeParams, scopeDeps } from "../lib/scope";
-import { useOpenIp } from "../lib/ipContext";
+import { useNav } from "../lib/nav";
 import { usePalette } from "../theme/ThemeProvider";
 import StatPanels from "../components/StatPanels";
 import PipelineNotice from "../components/PipelineNotice";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
 import HBarChart from "../components/HBarChart";
+import PanelTitle from "../components/PanelTitle";
 
 export default function Overview({ scope }) {
   const p = usePalette();
-  const openIp = useOpenIp();
+  const { openIp } = useNav();
   const [metrics, setMetrics] = useState(null);
   const [hist, setHist] = useState(null);
   const [ips, setIps] = useState(null);
@@ -36,7 +37,7 @@ export default function Overview({ scope }) {
     scopeDeps(scope)
   );
 
-  const refreshRecent = usePolling(
+  usePolling(
     async (isCurrent) => {
       try {
         const c = await getCombined({ limit: 10, ...scopeParams(scope) });
@@ -66,7 +67,7 @@ export default function Overview({ scope }) {
         <EuiFlexItem grow={1}>
           <HBarChart
             title="Top source IPs"
-            description="Most active alert sources in this range. Click a bar to investigate the IP."
+            info="Most active alert sources in this range, all rule levels. Click a bar to open the IP."
             data={ips}
             seriesName="Alerts"
             color={p.single}
@@ -81,21 +82,15 @@ export default function Overview({ scope }) {
       </EuiFlexGroup>
       <EuiSpacer />
       <EuiPanel hasBorder>
-        <EuiTitle size="xs">
-          <h2>Latest detections</h2>
-        </EuiTitle>
-        <EuiText size="s" color="subdued">
-          <p>
-            Most recent from both streams in this range (rules at level 10+). Full feeds
-            under Security events and AI detections.
-          </p>
-        </EuiText>
+        <PanelTitle
+          title="Latest detections"
+          info="The most recent from both streams in this range (rules at level 10+). Full feeds under Security events and AI detections."
+        />
         <EuiSpacer size="s" />
         <AlertsTable
           alerts={recent ?? []}
           loading={recent == null}
           showTriageFilter={false}
-          onRefresh={refreshRecent}
         />
       </EuiPanel>
     </>

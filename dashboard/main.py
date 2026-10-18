@@ -1,15 +1,20 @@
+import hmac
 import ipaddress
 import os
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import unquote
 
 from dotenv import load_dotenv
 
 load_dotenv()  # before wazuh_api reads its env vars
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from opensearchpy import OpenSearch
 from pydantic import BaseModel
 
@@ -18,10 +23,45 @@ import wazuh_api
 
 app = FastAPI(title="AI-XDR Dashboard API")
 
-# allow the frontend (served from anywhere in dev) to call this API
+# ----------------------------------------------------------------- access
+# The API listens on 0.0.0.0 on a VM shared with another group, and it can push
+# firewall blocks to agents. Set DASHBOARD_API_KEY and every /api call except
+# /api/health must carry it in X-API-Key. One shared secret for the team: a lab
+# gate, not user accounts. Unset = open, as before.
+API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    path = request.url.path
+    if (API_KEY and path.startswith("/api/") and path != "/api/health"
+            and request.method != "OPTIONS"
+            and not hmac.compare_digest(request.headers.get("x-api-key", ""), API_KEY)):
+        return JSONResponse({"detail": "missing or wrong API key"}, status_code=401)
+    return await call_next(request)
+
+
+# Added after the key check so it wraps it (refusals still carry CORS headers).
+# Only needed when the console runs on another origin — the Vite dev server
+# without its /api proxy. Served by this app, or through the proxy, every call
+# is same-origin and CORS never applies.
+ALLOWED_ORIGINS = [o.strip() for o in (
+    os.environ.get("ALLOWED_ORIGINS") or "http://localhost:5173,http://127.0.0.1:5173"
+).split(",") if o.strip()]
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Analyst"],
 )
+
+
+def _analyst(value):
+    """The X-Analyst header (who is at the console), trimmed; None if absent.
+    The console percent-encodes it — header values must be Latin-1, so a name
+    in Thai couldn't be sent otherwise. (Called directly, the parameter's
+    Header(None) default isn't a str.)"""
+    if not isinstance(value, str):
+        return None
+    return unquote(value).strip()[:64] or None
 
 client = OpenSearch(
     hosts=[{"host": os.environ.get("OS_HOST", "localhost"),
@@ -42,6 +82,14 @@ def _first(x):
     return x[0] if isinstance(x, list) and x else (x or None)
 
 
+# ATT&CK tactic for the techniques the AI heuristics assign (categorize() in the
+# consumers); rule alerts carry Wazuh's own rule.mitre.tactic. T1078 (Valid
+# Accounts) spans four tactics — the off-hours heuristic is about access.
+AI_TACTICS = {"T1110": "Credential Access", "T1595": "Reconnaissance",
+              "T1190": "Initial Access", "T1083": "Discovery",
+              "T1078": "Initial Access"}
+
+
 def _fmt_rule(hit):
     s = hit["_source"]
     rule = s.get("rule", {})
@@ -58,9 +106,11 @@ def _fmt_rule(hit):
         "srcuser":     s.get("data", {}).get("srcuser"),
         "dstuser":     s.get("data", {}).get("dstuser"),
         "source":      "rule",          # <-- the tag that separates rule vs AI
-        # category: MITRE tactic when tagged, else the most specific rule group
-        "category":    _first(mitre.get("tactic")) or (groups[-1] if groups else None),
+        # category = what kind of event (the most specific rule group);
+        # MITRE technique + tactic are their own fields, for both sources
+        "category":    groups[-1] if groups else None,
         "mitre":       _first(mitre.get("id")),
+        "tactic":      _first(mitre.get("tactic")),
     }
 
 
@@ -99,6 +149,7 @@ def _fmt_ai(hit):
         "windows_scored":  ai.get("windows_scored"),
         "category":    ai.get("category"),
         "mitre":       ai.get("mitre"),
+        "tactic":      AI_TACTICS.get((ai.get("mitre") or "").split(".")[0]),
         "srcip":       top_ips[0]["ip"] if top_ips else None,
         "top_srcips":  top_ips,
         "explanation": ai.get("explanation"),
@@ -240,9 +291,22 @@ def _merge_triage(alerts):
         a["false_positive"] = bool((t or {}).get("false_positive"))
     return alerts
 
+
+def _merge_state(alerts):
+    """Triage fields plus the current block on each alert's source IP (any
+    agent), so the console can say "blocked" instead of offering Block again."""
+    blocked = {b["srcip"]: b for b in blocked_ips()["blocked"]}
+    for a in _merge_triage(alerts):
+        a["blocked"] = blocked.get(a.get("srcip"))
+    return alerts
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "cluster": client.info()["cluster_name"]}
+    """Liveness for the console header; open even when an API key is set, and
+    says whether one is needed so the console knows to ask for it."""
+    return {"status": "ok", "cluster": client.info()["cluster_name"],
+            "auth_required": bool(API_KEY)}
 
 @app.get("/api/alerts/rule")
 def rule_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
@@ -262,7 +326,7 @@ def rule_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
     res = client.search(index=RULE_INDEX, body=body)
     return {
         "count": res["hits"]["total"]["value"],
-        "alerts": _merge_triage([_fmt_rule(h) for h in res["hits"]["hits"]]),
+        "alerts": _merge_state([_fmt_rule(h) for h in res["hits"]["hits"]]),
     }
 
 @app.get("/api/alerts/ai")
@@ -286,7 +350,7 @@ def ai_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
 
     return {
         "count": res["hits"]["total"]["value"],
-        "alerts": _merge_triage([_fmt_ai(h) for h in res["hits"]["hits"]]),
+        "alerts": _merge_state([_fmt_ai(h) for h in res["hits"]["hits"]]),
     }
 
 @app.get("/api/alerts/histogram")
@@ -369,6 +433,15 @@ def combined(limit: int = 100, start: str | None = None, end: str | None = None,
 
 
 # ----------------------------------------------------------------- investigation
+
+@app.get("/api/alerts/one")
+def alert_one(alert_id: str):
+    """One alert in the same shape the feeds return (triage and block state
+    merged) — what the alert flyout loads, so a link to an alert works on its own."""
+    hit = _get_alert_hit(alert_id)
+    fmt = _fmt_ai if alert_id.startswith("ai:") else _fmt_rule
+    return _merge_state([fmt(hit)])[0]
+
 
 @app.get("/api/alerts/doc")
 def alert_doc(alert_id: str):
@@ -478,7 +551,7 @@ def ip_entity(ip: str, limit: int = 200):
     seen = [t for t in (_agg_time(r, "first"), _agg_time(a, "first"),
                         _agg_time(r, "last"), _agg_time(a, "last")) if t]
 
-    alerts = _merge_triage([_fmt_rule(h) for h in hits(r)] + [_fmt_ai(h) for h in hits(a)])
+    alerts = _merge_state([_fmt_rule(h) for h in hits(r)] + [_fmt_ai(h) for h in hits(a)])
     alerts.sort(key=lambda x: x["timestamp"] or "", reverse=True)
     return {
         "ip": ip,
@@ -515,7 +588,7 @@ class BlockRequest(BaseModel):
     reason: str | None = None
 
 
-def _audit(action, req, status, detail=""):
+def _audit(action, req, status, detail="", analyst=None):
     doc = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "action": action,
@@ -525,39 +598,83 @@ def _audit(action, req, status, detail=""):
         "reason": req.reason,
         "status": status,
         "detail": detail,
-        "initiated_by": "dashboard",
+        "initiated_by": analyst or "dashboard",
     }
     idx = f"{RESPONSE_INDEX}-{datetime.now(timezone.utc):%Y.%m.%d}"
     client.index(index=idx, body=doc, refresh=True)
     return doc
 
 
+# Addresses never to block, on top of the built-in rules below: the VM's gateway,
+# the analysts' workstations, a VPN range. Comma-separated IPs or CIDRs.
+BLOCK_ALLOWLIST = [ipaddress.ip_network(x.strip(), strict=False)
+                   for x in os.environ.get("BLOCK_ALLOWLIST", "").split(",") if x.strip()]
+
+
+def _requester_ip(request):
+    """Where the console is being used from. Behind the dev proxy that's the
+    X-Forwarded-For hop; spoofing it can only make the guard refuse more."""
+    fwd = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    try:
+        return ipaddress.ip_address(fwd or (request.client.host if request.client else ""))
+    except ValueError:
+        return None
+
+
+def _block_refusal(ip, agent_id, requester):
+    """(status, reason) if blocking `ip` on `agent_id` must be refused, else None."""
+    if ip.is_loopback:
+        return 400, ("a loopback address — that would drop the agent's own local "
+                     "traffic. (Mock attacks from localhost are not blockable; attack "
+                     "from another host to demo this.)")
+    if ip.is_unspecified or ip.is_multicast or ip.is_link_local or ip.is_reserved:
+        return 400, "not a single routable host (unspecified, multicast, link-local or reserved)"
+    for net in BLOCK_ALLOWLIST:
+        if ip in net:
+            return 400, f"on the block allowlist ({net}, BLOCK_ALLOWLIST in dashboard/.env)"
+    if requester is not None and ip == requester:
+        return 400, "the address this console is being used from — it would lock you out"
+    try:
+        agents = {a.get("id"): a for a in wazuh_api.get_agents()}
+    except Exception:
+        agents = {}           # Wazuh down: the block itself fails and is audited
+    for who, agent in (("the target agent's own address", agents.get(agent_id)),
+                       ("the Wazuh manager's address", agents.get("000"))):
+        try:
+            if agent and ip == ipaddress.ip_address(agent.get("ip", "")):
+                return 400, f"{who} — the agent would cut itself off"
+        except ValueError:
+            pass              # Wazuh reports "any" for agents without a fixed IP
+    if any(b["agent_id"] == agent_id and b["srcip"] == str(ip)
+           for b in blocked_ips()["blocked"]):
+        return 409, f"already blocked on agent {agent_id}"
+    return None
+
+
 @app.post("/api/response/block-ip")
-def block_ip(req: BlockRequest):
-    """Trigger firewall-drop active response on the agent, with guardrails."""
+def block_ip(req: BlockRequest, request: Request, x_analyst: str | None = Header(None)):
+    """Trigger firewall-drop active response on the agent, with guardrails.
+    Every attempt is audited, refusals included."""
+    analyst = _analyst(x_analyst)
     try:
         ip = ipaddress.ip_address(req.srcip)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"'{req.srcip}' is not a valid IP")
 
-    # refuse blocks that would sever the agent's own plumbing
-    if ip.is_loopback:
-        _audit("block-ip", req, "refused", "loopback address")
-        raise HTTPException(
-            status_code=400,
-            detail="Refusing to block a loopback address — that would drop the "
-                   "agent's own local traffic. (Mock attacks from localhost are "
-                   "not blockable; attack from another host to demo this.)",
-        )
+    refusal = _block_refusal(ip, req.agent_id, _requester_ip(request))
+    if refusal:
+        code, reason = refusal
+        _audit("block-ip", req, "refused", reason, analyst)
+        raise HTTPException(status_code=code, detail=f"Refusing to block {ip}: {reason}")
 
     try:
         res = wazuh_api.block_ip(req.agent_id, req.srcip)
     except Exception as e:
-        _audit("block-ip", req, "failed", str(e))
+        _audit("block-ip", req, "failed", str(e), analyst)
         raise HTTPException(status_code=502, detail=f"Active response failed: {e}")
 
     doc = _audit("block-ip", req, "executed",
-                 f"firewall-drop sent to agent {req.agent_id}")
+                 f"firewall-drop sent to agent {req.agent_id}", analyst)
     return {"ok": True, "wazuh": res.get("message"), "audit": doc}
 
 
@@ -622,7 +739,7 @@ class UnblockRequest(BaseModel):
 
 
 @app.post("/api/response/unblock-ip")
-def unblock_ip(req: UnblockRequest):
+def unblock_ip(req: UnblockRequest, x_analyst: str | None = Header(None)):
     """Best-effort unblock. Wazuh has no first-class 'undo firewall-drop' over the
     manager API — this attempts the paired delete on the agent. If Wazuh does not
     accept it, the action is audited as 'unconfirmed' and the IP stays in the
@@ -645,7 +762,7 @@ def unblock_ip(req: UnblockRequest):
                   "the agent (iptables -D) or install the firewall-drop delete "
                   "active-response, then retry.")
 
-    doc = _audit("unblock-ip", audit_req, status, detail)
+    doc = _audit("unblock-ip", audit_req, status, detail, _analyst(x_analyst))
     return {"ok": True, "confirmed": status == "executed", "wazuh": wazuh_msg,
             "audit": doc}
 
@@ -683,7 +800,7 @@ def triage_list(limit: int = 500):
 
 
 @app.post("/api/triage")
-def triage_set(req: TriageUpdate):
+def triage_set(req: TriageUpdate, x_analyst: str | None = Header(None)):
     """Create or update the triage record for one alert (keyed by alert id)."""
     if req.status not in TRIAGE_STATES:
         raise HTTPException(status_code=400,
@@ -716,6 +833,7 @@ def triage_set(req: TriageUpdate):
         "alert_agent": req.alert_agent or existing.get("alert_agent"),
         "created_at": existing.get("created_at", now),
         "updated_at": now,
+        "updated_by": _analyst(x_analyst) or existing.get("updated_by"),
         "resolved_at": resolved_at,
     }
     client.index(index=TRIAGE_INDEX, id=req.alert_id, body=doc, refresh=True)
@@ -953,3 +1071,13 @@ def explain_chat(req: ExplainChatRequest):
         raise HTTPException(status_code=502, detail=f"explainer '{name}' failed: {e}")
 
     return {"ok": True, "reply": reply, "provider": provider_used}
+
+
+# ----------------------------------------------------------------- console
+# Serve the built console (cd frontend && npm run build -> frontend/dist) from
+# this app: one port for everything, and every API call is same-origin. Mounted
+# last, so each /api route above matches first; skipped until the console has
+# been built (npm run dev still works on its own port, through its /api proxy).
+CONSOLE_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
+if CONSOLE_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")

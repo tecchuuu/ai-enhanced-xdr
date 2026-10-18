@@ -76,6 +76,12 @@ Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from
 `EXPLAINER_PROVIDER=ollama`, `OLLAMA_MODEL=llama3.2` (no ANTHROPIC key),
 `WAZUH_CONTAINER=luckyfive_wazuh-wazuh.manager-1` (must match your `-p` name so the producer tails YOUR manager, never the other group's).
 
+**Shared box → lock the console down.** The API listens on `0.0.0.0:8000` and can push firewall blocks to agents, so anyone on the VM's network — the other group included — could call it. In the same `.env`:
+- `DASHBOARD_API_KEY=<a long random string>` — the console asks for it once per browser (`openssl rand -hex 24` makes one).
+- `BLOCK_ALLOWLIST=<VM gateway IP>,<your workstation / VPN range>` — addresses the console refuses to block, on top of its built-in rules (loopback, the agent's and the manager's own IPs, your own address, non-routable ranges).
+
+Restart the API after editing (`start_all.sh` restarts everything).
+
 ## 5. Kafka + pipeline
 - `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml up -d`
 - `./ai-stack/start_all.sh`  (uvicorn + producer + consumer, via nohup)

@@ -36,7 +36,8 @@ function BlockStatus({ blocked }) {
 
 // The IP pivot: everything the console has on one source address, all time.
 // Opened from any IP link (tables, alert flyout, top-IPs chart, blocked list).
-export default function IpFlyout({ ip, onClose }) {
+// refreshKey: reload after a triage save or block made in the alert flyout above it.
+export default function IpFlyout({ ip, onClose, refreshKey }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [blocking, setBlocking] = useState(false);
@@ -54,8 +55,11 @@ export default function IpFlyout({ ip, onClose }) {
 
   useEffect(() => {
     setData(null);
+  }, [ip]);
+
+  useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const stats = data && [
     { title: data.rule_count, description: "Rule alerts (any level)" },
@@ -123,7 +127,7 @@ export default function IpFlyout({ ip, onClose }) {
               </EuiText>
             )}
             <EuiSpacer size="s" />
-            <AlertsTable alerts={data.alerts} onRefresh={load} />
+            <AlertsTable alerts={data.alerts} />
           </>
         )}
       </EuiFlyoutBody>

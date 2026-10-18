@@ -6,40 +6,21 @@ import {
   ScaleType,
   Position,
 } from "@elastic/charts";
-import {
-  EuiPanel,
-  EuiTitle,
-  EuiText,
-  EuiSpacer,
-  EuiEmptyPrompt,
-} from "@elastic/eui";
+import { EuiPanel, EuiSpacer, EuiEmptyPrompt } from "@elastic/eui";
 import { useTheme, useChartTheme } from "../theme/ThemeProvider";
+import PanelTitle from "./PanelTitle";
 
 // A single measure across categories (top IPs, detection categories): one hue,
 // magnitude by bar length. `data` is [{label, count}]; onBarClick(label) makes
-// the bars a drill-down (the top-IPs chart opens the IP pivot).
-export default function HBarChart({
-  title,
-  description,
-  data,
-  seriesName,
-  color,
-  empty,
-  onBarClick,
-}) {
+// the bars a drill-down (the top-IPs chart opens the IP pivot). `info` is the
+// panel's explanation, shown on hover.
+export default function HBarChart({ title, info, data, seriesName, color, empty, onBarClick }) {
   const { baseTheme } = useTheme();
   const theme = useChartTheme();
 
   return (
     <EuiPanel hasBorder>
-      <EuiTitle size="xs">
-        <h2>{title}</h2>
-      </EuiTitle>
-      {description && (
-        <EuiText size="s" color="subdued">
-          <p>{description}</p>
-        </EuiText>
-      )}
+      <PanelTitle title={title} info={info} />
       <EuiSpacer size="s" />
       <div style={{ height: 260 }}>
         {data?.length ? (

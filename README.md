@@ -80,9 +80,14 @@ access (`sudo usermod -aG docker $USER`, then re-login).
 ```bash
 cd dashboard/frontend
 npm install
-npm run dev
+npm run build
 ```
-Console: `http://localhost:5173` — Wazuh-style UI (same EUI component library)
+The API from step 6 then serves the console too: `http://<host>:8000` — one
+port, no separate frontend process. Rebuild after pulling frontend changes. For
+live editing, `npm run dev` serves it on `:5173` instead and proxies `/api` to
+`:8000` (`API_TARGET=http://host:port npm run dev` if the API is elsewhere).
+
+The console is a Wazuh-style UI (same EUI component library)
 with rule + AI alerts, a shared time range and agent filter, server-side search
 (IP, user, rule ID, text), time charts, threat categories, alert detail flyout
 with related events and the raw document, a **Why it fired** panel on AI

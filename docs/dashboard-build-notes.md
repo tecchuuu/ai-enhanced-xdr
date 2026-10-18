@@ -24,6 +24,10 @@ analyst act on it" story — not decoration.
 | **Pipeline health** — is each part alive | consumers heartbeat into `ai-pipeline-status`; `GET /api/pipeline/status` | **Pipeline** page; `PipelineNotice` on Overview / AI detections |
 | **Detection split** — rule vs AI, minute by minute | `/api/alerts/combined` (scoped) | **Detection split** page (replaces `dashboard.html`) |
 | **Model** — which inference-slot occupant flagged it | `ai.model` (always written); `ai_by_model` in `/api/metrics` | Model column on AI detections; by-model line on Metrics |
+| **Access** — optional shared key, analyst attribution | `DASHBOARD_API_KEY` → `X-API-Key` on every `/api` call but `/api/health`; `X-Analyst` → `initiated_by` / `updated_by`; CORS limited to `ALLOWED_ORIGINS` | `SessionModal` (asks once per browser), analyst name in the header, **By** column in the response log |
+| **Block guardrails** — refuse unsafe blocks, show existing ones | `_block_refusal()`; `blocked` on every alert from the feeds | lock icon on blocked IPs, "source blocked" badge and footer in the alert flyout |
+| **Links** — every view has a URL | `GET /api/alerts/one` (one alert, feed shape) | hash routes (`lib/route.js`): page, range, agent, open IP, open alert |
+| **One port** — API serves the built console | `frontend/dist` mounted at `/` after the API routes | `npm run build`; `npm run dev` proxies `/api` (`vite.config.js`) |
 
 ## Contracts
 
@@ -154,6 +158,33 @@ active agents, newest rule alert / AI detection, and `explainer.status()`
 notice ignores a consumer silent for over a day — treated as deliberately
 stopped (the web lane isn't always run); the Pipeline page still shows it.
 
+### Access (`DASHBOARD_API_KEY`, `X-Analyst`)
+Unset key = open API, as before. Set, every `/api` route except `/api/health`
+needs `X-API-Key` (compared in constant time); `/api/health` reports
+`auth_required` so the console knows to ask. A 401 still carries CORS headers.
+The console keeps the key and the analyst name in this browser's localStorage
+(`lib/session.js`) — a shared-secret gate for a lab on a shared VM, not user
+accounts. The analyst name is percent-encoded in `X-Analyst` (header values
+must be Latin-1; a Thai name isn't) and decoded server-side; it lands in the
+audit doc's `initiated_by` and the triage doc's `updated_by`. CORS is only
+needed for a console on another origin; same-origin (served by the API, or
+through the Vite proxy) never triggers it.
+
+### Block guardrails (`POST /api/response/block-ip`)
+Refused (HTTP 400, audited as `refused`): loopback; unspecified / multicast /
+link-local / reserved; anything in `BLOCK_ALLOWLIST` (IPs or CIDRs); the
+address the console is used from (`X-Forwarded-For` first hop, else the
+client — spoofing it can only refuse more); the target agent's own IP and the
+manager's (agent `000`), from the Wazuh agent list. Already blocked on that
+agent → 409. Feeds, the IP pivot and `/api/alerts/one` add `blocked` (the
+current block entry, any agent) to each alert.
+
+### Category vs MITRE
+`category` is now *what kind of event*: a rule alert's most specific
+`rule.groups` entry, or the AI heuristic. ATT&CK is separate on both sources:
+`mitre` (technique) + `tactic` — Wazuh's `rule.mitre.tactic` for rules, a small
+technique→tactic map (`AI_TACTICS`) for the AI heuristics' techniques.
+
 ## Known limitations (state these in the report)
 
 1. **Unblock is best-effort.** Wazuh's manager API has no documented "undo
@@ -193,6 +224,12 @@ stopped (the web lane isn't always run); the Pipeline page still shows it.
 - [ ] Agent selector narrows both feeds and the Overview tiles.
 - [ ] Related events on a real AI detection list the sshd alerts from its IP;
       the IP pivot's first/last seen and accounts look right for the attacker.
+- [ ] `npm run build`, then open `http://<vm>:8000` → the console loads from the
+      API's port; a copied alert link reopens the same alert.
+- [ ] Set `DASHBOARD_API_KEY` → the console asks for it once; a browser without
+      it gets nothing but `/api/health`.
+- [ ] Blocking the VM's own IP, the manager's, or an allowlisted address is
+      refused with a reason in the response log; blocking an IP twice → 409.
 - [ ] Restart the consumers (`start_all.sh`) → the **Pipeline** page shows both
       detectors `warming up`, then `running`; stop one → it turns `silent`
       within ~3 minutes and Overview says so.

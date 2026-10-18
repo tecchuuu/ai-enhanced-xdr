@@ -33,7 +33,7 @@ export default function SecurityEvents({ scope }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  const refresh = usePolling(
+  usePolling(
     async (isCurrent) => {
       try {
         const d = await getRuleAlerts({ limit: LIMIT, min_level: minLevel, q, ...scopeParams(scope) });
@@ -91,7 +91,6 @@ export default function SecurityEvents({ scope }) {
         alerts={data?.alerts ?? []}
         loading={data == null && !error}
         showSource={false}
-        onRefresh={refresh}
       />
     </EuiPanel>
   );

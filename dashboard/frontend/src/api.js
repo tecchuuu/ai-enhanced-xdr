@@ -1,13 +1,32 @@
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+import { loadSession } from "./lib/session";
 
-async function fetchJson(path) {
-  const res = await fetch(`${API}${path}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? `${path.split("?")[0]} -> HTTP ${res.status}`);
-  }
-  return res.json();
+// Same origin by default: the backend serves the built console, and the Vite
+// dev server proxies /api. VITE_API_URL points elsewhere (then the backend's
+// ALLOWED_ORIGINS must list the console's origin).
+const API = import.meta.env.VITE_API_URL ?? "";
+
+// The analyst name is percent-encoded: header values must be Latin-1, and a
+// name in Thai isn't. The backend decodes it.
+function sessionHeaders() {
+  const { apiKey, analyst } = loadSession();
+  return {
+    ...(apiKey ? { "X-API-Key": apiKey } : {}),
+    ...(analyst ? { "X-Analyst": encodeURIComponent(analyst) } : {}),
+  };
 }
+
+async function request(path, init = {}) {
+  const res = await fetch(`${API}${path}`, {
+    ...init,
+    headers: { ...init.headers, ...sessionHeaders() },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401) window.dispatchEvent(new Event("aixdr:unauthorized"));
+  if (!res.ok) throw new Error(body.detail ?? `${path.split("?")[0]} -> HTTP ${res.status}`);
+  return body;
+}
+
+const fetchJson = (path) => request(path);
 
 // {a: 1, b: undefined} -> "?a=1"; empty values are left out
 function query(params = {}) {
@@ -19,16 +38,12 @@ function query(params = {}) {
   return s ? `?${s}` : "";
 }
 
-async function postJson(path, payload) {
-  const res = await fetch(`${API}${path}`, {
+const postJson = (path, payload) =>
+  request(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
-  return body;
-}
 
 export const getHealth = () => fetchJson("/api/health");
 
@@ -41,6 +56,7 @@ export const getHistogram = (params) => fetchJson(`/api/alerts/histogram${query(
 export const getTopSrcIps = (params) => fetchJson(`/api/alerts/top_srcips${query(params)}`);
 export const getMetrics = (params) => fetchJson(`/api/metrics${query(params)}`);
 
+export const getAlert = (alertId) => fetchJson(`/api/alerts/one${query({ alert_id: alertId })}`);
 export const getAlertDoc = (alertId) => fetchJson(`/api/alerts/doc${query({ alert_id: alertId })}`);
 export const getRelated = (alertId) =>
   fetchJson(`/api/alerts/related${query({ alert_id: alertId })}`);

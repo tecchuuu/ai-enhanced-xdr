@@ -20,4 +20,4 @@ nohup "$VENV/python" -u web_detection_consumer.py > "$LOGS/web_consumer.log" 2>&
 sleep 2
 echo "started:"; jobs -l
 echo "logs in $LOGS/  |  stop with: pkill -f 'uvicorn|archive_producer|detection_consumer|web_detection_consumer'"
-echo "frontend: cd $ROOT/dashboard/frontend && npm run dev"
+echo "console: http://<this host>:8000 (after: cd $ROOT/dashboard/frontend && npm run build)"

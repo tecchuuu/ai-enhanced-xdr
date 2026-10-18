@@ -1,4 +1,5 @@
 import { EuiPanel, EuiTitle, EuiText, EuiSpacer, EuiBasicTable, EuiBadge } from "@elastic/eui";
+import PanelTitle from "./PanelTitle";
 
 const LABELS = {
   event_count: "Events in window",
@@ -77,9 +78,12 @@ export default function WhyItFired({ alert }) {
 
   return (
     <EuiPanel hasBorder>
-      <EuiTitle size="xxs">
-        <h3>Why it fired</h3>
-      </EuiTitle>
+      <PanelTitle
+        title="Why it fired"
+        size="xxs"
+        as="h3"
+        info={`"Normal" is the windows in the model's rolling buffer that it did not flag when this one was scored (${scored} windows in that fit). The cutoff moves with the buffer: the model flags a fixed share of windows, not a fixed score. Lower scores are more anomalous.`}
+      />
       <EuiSpacer size="xs" />
       <EuiText size="s">
         <p>
@@ -96,15 +100,6 @@ export default function WhyItFired({ alert }) {
       </EuiText>
       <EuiSpacer size="s" />
       <EuiBasicTable items={rows} columns={columns} compressed tableLayout="auto" />
-      <EuiSpacer size="s" />
-      <EuiText size="xs" color="subdued">
-        <p>
-          &ldquo;Normal&rdquo; is the windows in the model&rsquo;s rolling buffer that it did
-          not flag when this one was scored ({scored} windows in that fit). The cutoff
-          moves with the buffer: the model flags a fixed share of windows, not a fixed
-          score. Lower scores are more anomalous.
-        </p>
-      </EuiText>
     </EuiPanel>
   );
 }

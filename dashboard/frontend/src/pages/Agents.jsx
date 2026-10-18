@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { EuiPanel, EuiInMemoryTable, EuiHealth, EuiCallOut } from "@elastic/eui";
+import { EuiPanel, EuiInMemoryTable, EuiHealth, EuiCallOut, EuiLink, EuiToolTip } from "@elastic/eui";
 import { getAgents } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { useNav } from "../lib/nav";
 
 const STATUS_COLOR = {
   active: "success",
@@ -18,6 +19,7 @@ const fmtKeepAlive = (ts) => {
 };
 
 export default function Agents() {
+  const { goto } = useNav();
   const [agents, setAgents] = useState(null);
   const [error, setError] = useState(null);
 
@@ -34,7 +36,17 @@ export default function Agents() {
 
   const columns = [
     { field: "id", name: "ID", width: "60px", sortable: true },
-    { field: "name", name: "Name", sortable: true },
+    {
+      field: "name",
+      name: "Name",
+      sortable: true,
+      // straight to this agent's alerts: Security events scoped to it
+      render: (name) => (
+        <EuiToolTip content="Show this agent's alerts">
+          <EuiLink onClick={() => goto({ page: "events", agent: name })}>{name}</EuiLink>
+        </EuiToolTip>
+      ),
+    },
     { field: "ip", name: "IP", width: "130px" },
     {
       field: "status",

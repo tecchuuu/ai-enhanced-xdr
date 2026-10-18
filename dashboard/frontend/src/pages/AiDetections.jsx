@@ -20,7 +20,7 @@ export default function AiDetections({ scope }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  const refresh = usePolling(
+  usePolling(
     async (isCurrent) => {
       try {
         const d = await getAiAlerts({ limit: LIMIT, q, ...scopeParams(scope) });
@@ -52,12 +52,12 @@ export default function AiDetections({ scope }) {
       <PipelineNotice />
       <HBarChart
         title="Detections by category"
-        description="Heuristic post-classification of the detections below. The model flags the deviation; the category makes it triageable."
+        info="Heuristic post-classification of the detections below. The model flags the deviation; the category makes it triageable."
         data={categories}
         seriesName="Detections"
         color={p.ai}
         empty={{
-          icon: "visBarVertical",
+          icon: "chartBarVertical",
           title: "No detections in this range",
           body: "Widen the time range, or generate traffic and give the consumer ~10 minutes to fill its window buffer.",
         }}
@@ -94,7 +94,6 @@ export default function AiDetections({ scope }) {
           loading={data == null && !error}
           showScore
           showSource={false}
-          onRefresh={refresh}
         />
       </EuiPanel>
     </>

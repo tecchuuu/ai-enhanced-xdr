@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   EuiHeader,
   EuiHeaderSection,
@@ -7,18 +7,26 @@ import {
   EuiHealth,
   EuiIcon,
   EuiButtonIcon,
+  EuiButtonEmpty,
   EuiPageTemplate,
   EuiSideNav,
   EuiTextColor,
   EuiToolTip,
   EuiSuperDatePicker,
   EuiSelect,
+  EuiFlyout,
+  EuiFlyoutBody,
+  EuiCallOut,
 } from "@elastic/eui";
-import { getHealth, getAgents } from "./api";
+import { getHealth, getAgents, getAlert } from "./api";
 import { usePolling } from "./lib/usePolling";
-import { IpContext } from "./lib/ipContext";
+import { useHashRoute } from "./lib/route";
+import { NavContext } from "./lib/nav";
+import { loadSession } from "./lib/session";
 import { useTheme } from "./theme/ThemeProvider";
 import IpFlyout from "./components/IpFlyout";
+import AlertFlyout from "./components/AlertFlyout";
+import SessionModal from "./components/SessionModal";
 import Overview from "./pages/Overview";
 import SecurityEvents from "./pages/SecurityEvents";
 import AiDetections from "./pages/AiDetections";
@@ -42,7 +50,7 @@ const PAGES = {
   },
   events: {
     title: "Security events",
-    icon: "alert",
+    icon: "warning",
     description: "Alerts raised by the Wazuh ruleset, with severity and triage state.",
     component: SecurityEvents,
     scoped: true,
@@ -99,30 +107,82 @@ const NAV_GROUPS = [
   { id: "grp-system", name: "System", pages: ["pipeline", "agents"] },
 ];
 
+const DEFAULT_RANGE = { start: "now-24h", end: "now" };
+
 export default function App() {
   const { colorMode, toggle } = useTheme();
-  const [page, setPage] = useState("overview");
-  const [connected, setConnected] = useState(null); // null = connecting
-  const [updatedAt, setUpdatedAt] = useState(null);
+  // page, time range, agent, open IP pivot, open alert: all in the URL
+  const [route, navigate] = useHashRoute();
+  const page = PAGES[route.page] ? route.page : "overview";
   // the scope every scoped page reads: date-math strings straight from the
   // picker (resolved per fetch, see lib/scope.js) and an agent name ("" = all)
-  const [range, setRange] = useState({ start: "now-24h", end: "now" });
-  const [agent, setAgent] = useState("");
+  const range = { start: route.start ?? DEFAULT_RANGE.start, end: route.end ?? DEFAULT_RANGE.end };
+  const agent = route.agent ?? "";
+
+  const [connected, setConnected] = useState(null); // null = connecting
+  const [updatedAt, setUpdatedAt] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [agents, setAgents] = useState([]);
-  const [ip, setIp] = useState(null); // the IP pivot flyout, opened from anywhere
+  const [keyRequired, setKeyRequired] = useState(false);
+  const [analyst, setAnalyst] = useState(() => loadSession().analyst ?? "");
+  const [sessionPrompt, setSessionPrompt] = useState(null); // null | { rejected }
+  const [alertState, setAlertState] = useState(null); // { id, alert?, error? }
+  const refreshAll = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   // each page loads and polls its own data; the header only tracks the API
   usePolling(async (isCurrent) => {
     try {
-      await getHealth();
+      const h = await getHealth();
       if (!isCurrent()) return;
       setConnected(true);
       setUpdatedAt(new Date());
+      setKeyRequired(Boolean(h.auth_required));
+      if (h.auth_required && !loadSession().apiKey) setSessionPrompt((p) => p ?? {});
     } catch {
       if (isCurrent()) setConnected(false);
     }
   }, REFRESH_MS);
+
+  // any call the API refused for a missing/wrong key asks for it (api.js)
+  useEffect(() => {
+    const onUnauthorized = () => setSessionPrompt({ rejected: true });
+    window.addEventListener("aixdr:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("aixdr:unauthorized", onUnauthorized);
+  }, []);
+
+  // The alert flyout. A click hands over the row (shown at once); the alert is
+  // then (re)fetched by id, which is also how a pasted link opens it, and how
+  // it picks up a triage save, a block or a new explanation (refreshKey).
+  useEffect(() => {
+    const id = route.alert;
+    if (!id) return;
+    let alive = true;
+    getAlert(id)
+      .then((a) => alive && setAlertState({ id, alert: a }))
+      .catch(
+        (e) =>
+          alive &&
+          setAlertState((cur) =>
+            cur?.id === id && cur.alert ? cur : { id, error: String(e.message ?? e) }
+          )
+      );
+    return () => {
+      alive = false;
+    };
+  }, [route.alert, refreshKey]);
+
+  const nav = useMemo(
+    () => ({
+      openIp: (ip) => navigate({ ip }),
+      openAlert: (a) => {
+        setAlertState({ id: a.id, alert: a });
+        navigate({ alert: a.id });
+      },
+      goto: navigate,
+    }),
+    [navigate]
+  );
+  const openAlert = route.alert && alertState?.id === route.alert ? alertState : null;
 
   // agent list for the selector; empty (just "All agents") while the Wazuh API is down
   usePolling(async (isCurrent) => {
@@ -140,8 +200,14 @@ export default function App() {
       key="time"
       start={range.start}
       end={range.end}
-      onTimeChange={({ start, end, isInvalid }) => !isInvalid && setRange({ start, end })}
-      onRefresh={() => setRefreshKey((k) => k + 1)}
+      onTimeChange={({ start, end, isInvalid }) =>
+        !isInvalid &&
+        navigate({
+          start: start === DEFAULT_RANGE.start ? null : start,
+          end: end === DEFAULT_RANGE.end ? null : end,
+        })
+      }
+      onRefresh={refreshAll}
       width="auto"
     />,
     <EuiSelect
@@ -150,9 +216,11 @@ export default function App() {
       options={[
         { value: "", text: "All agents" },
         ...agents.map((a) => ({ value: a.name, text: a.name })),
+        // an agent from a link that the Wazuh API doesn't list (API down, or retired)
+        ...(agent && !agents.some((a) => a.name === agent) ? [{ value: agent, text: agent }] : []),
       ]}
       value={agent}
-      onChange={(e) => setAgent(e.target.value)}
+      onChange={(e) => navigate({ agent: e.target.value || null })}
     />,
   ];
 
@@ -163,7 +231,7 @@ export default function App() {
       id,
       name: PAGES[id].title,
       icon: <EuiIcon type={PAGES[id].icon} />,
-      onClick: () => setPage(id),
+      onClick: () => navigate({ page: id, alert: null, ip: null }),
       isSelected: page === id,
     })),
   }));
@@ -171,7 +239,7 @@ export default function App() {
   const Page = PAGES[page].component;
 
   return (
-    <IpContext.Provider value={setIp}>
+    <NavContext.Provider value={nav}>
       <EuiHeader>
         <EuiHeaderSection>
           <EuiHeaderSectionItem>
@@ -179,6 +247,18 @@ export default function App() {
           </EuiHeaderSectionItem>
         </EuiHeaderSection>
         <EuiHeaderSection side="right">
+          <EuiHeaderSectionItem>
+            <EuiToolTip content="Recorded on blocks, unblocks and triage changes">
+              <EuiButtonEmpty
+                size="xs"
+                iconType="user"
+                color="text"
+                onClick={() => setSessionPrompt({})}
+              >
+                {analyst || "Set analyst name"}
+              </EuiButtonEmpty>
+            </EuiToolTip>
+          </EuiHeaderSectionItem>
           <EuiHeaderSectionItem>
             <EuiHealth
               color={connected == null ? "subdued" : connected ? "success" : "danger"}
@@ -222,7 +302,44 @@ export default function App() {
           <Page scope={scope} />
         </EuiPageTemplate.Section>
       </EuiPageTemplate>
-      {ip && <IpFlyout ip={ip} onClose={() => setIp(null)} />}
-    </IpContext.Provider>
+
+      {/* rendered in this order so an alert opened from the IP pivot sits on top */}
+      {route.ip && (
+        <IpFlyout ip={route.ip} refreshKey={refreshKey} onClose={() => navigate({ ip: null })} />
+      )}
+      {openAlert?.alert && (
+        <AlertFlyout
+          alert={openAlert.alert}
+          onClose={() => navigate({ alert: null })}
+          onRefresh={refreshAll}
+        />
+      )}
+      {openAlert?.error && !openAlert.alert && (
+        <EuiFlyout size="s" onClose={() => navigate({ alert: null })} aria-label="Alert not found">
+          <EuiFlyoutBody>
+            <EuiCallOut
+              title={`Couldn't open alert ${openAlert.id}`}
+              color="danger"
+              iconType="warning"
+            >
+              <p>{openAlert.error}</p>
+            </EuiCallOut>
+          </EuiFlyoutBody>
+        </EuiFlyout>
+      )}
+      {sessionPrompt && (
+        <SessionModal
+          keyRequired={keyRequired || sessionPrompt.rejected}
+          rejected={sessionPrompt.rejected}
+          onClose={(saved) => {
+            setSessionPrompt(null);
+            if (saved) {
+              setAnalyst(loadSession().analyst ?? "");
+              refreshAll();
+            }
+          }}
+        />
+      )}
+    </NavContext.Provider>
   );
 }

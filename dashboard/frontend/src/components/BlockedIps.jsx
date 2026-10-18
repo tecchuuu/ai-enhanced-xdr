@@ -3,7 +3,6 @@ import {
   EuiPanel,
   EuiBasicTable,
   EuiButton,
-  EuiTitle,
   EuiText,
   EuiSpacer,
   EuiEmptyPrompt,
@@ -16,10 +15,11 @@ import {
 import { getBlockedIps, unblockIp } from "../api";
 import { usePolling } from "../lib/usePolling";
 import { fmtTime } from "../lib/format";
-import { useOpenIp } from "../lib/ipContext";
+import { useNav } from "../lib/nav";
+import PanelTitle from "./PanelTitle";
 
 export default function BlockedIps() {
-  const openIp = useOpenIp();
+  const { openIp } = useNav();
   const [blocked, setBlocked] = useState(null);
   const [target, setTarget] = useState(null); // row pending unblock
   const [busy, setBusy] = useState(false);
@@ -92,16 +92,10 @@ export default function BlockedIps() {
 
   return (
     <EuiPanel hasBorder>
-      <EuiTitle size="xs">
-        <h2>Currently blocked</h2>
-      </EuiTitle>
-      <EuiText size="s" color="subdued">
-        <p>
-          Active <code>firewall-drop</code> blocks, derived from the response audit log.
-          Unblock is best-effort — Wazuh has no first-class API undo. If Wazuh does not
-          accept an unblock, the IP stays listed as <em>unblock unconfirmed</em>.
-        </p>
-      </EuiText>
+      <PanelTitle
+        title="Currently blocked"
+        info="Active firewall-drop blocks, derived from the response audit log. Unblock is best-effort — Wazuh has no first-class API undo. If Wazuh does not accept an unblock, the IP stays listed as 'unblock unconfirmed'."
+      />
       <EuiSpacer size="s" />
       {notice && (
         <>

@@ -1,28 +1,31 @@
 import { useState } from "react";
-import { EuiInMemoryTable, EuiFilterGroup, EuiFilterButton, EuiLink, EuiSpacer } from "@elastic/eui";
+import {
+  EuiInMemoryTable,
+  EuiFilterGroup,
+  EuiFilterButton,
+  EuiLink,
+  EuiSpacer,
+  EuiButtonIcon,
+  EuiIconTip,
+} from "@elastic/eui";
 import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
-import AlertFlyout from "./AlertFlyout";
+import MitreLink from "./MitreLink";
 import { fmtTime } from "../lib/format";
-import { useOpenIp } from "../lib/ipContext";
+import { useNav } from "../lib/nav";
 
 // showSource: off on single-source pages, where every row would say the same thing.
 // Searching is the page's job (server-side, see FeedSearch); the table only
-// filters what it was given by triage state.
+// filters what it was given by triage state. Opening an alert goes through the
+// URL (App renders the one alert flyout), so every alert has a link.
 export default function AlertsTable({
   alerts = [],
   loading,
   showScore = false,
   showSource = true,
   showTriageFilter = true,
-  onRefresh,
 }) {
-  const openIp = useOpenIp();
-  const [selected, setSelected] = useState(null);
+  const { openIp, openAlert } = useNav();
   const [triageShown, setTriageShown] = useState([]); // empty = every state
-
-  // keep the open flyout pointed at the freshest copy of its alert, so a triage
-  // save (which refetches upstream) is reflected without reopening
-  const current = selected ? (alerts.find((a) => a.id === selected.id) ?? selected) : null;
 
   const counts = {};
   for (const a of alerts) counts[a.triage_status ?? "new"] = (counts[a.triage_status ?? "new"] ?? 0) + 1;
@@ -34,14 +37,23 @@ export default function AlertsTable({
 
   const columns = [
     {
-      field: "timestamp",
-      name: "Time",
-      render: fmtTime,
-      sortable: true,
-      width: "170px",
+      // a keyboard-reachable way in; the whole row is also clickable
+      name: "",
+      width: "40px",
+      render: (a) => (
+        <EuiButtonIcon
+          iconType="inspect"
+          aria-label={`Open alert: ${a.description ?? a.id}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            openAlert(a);
+          }}
+        />
+      ),
     },
-    { field: "agent", name: "Agent", sortable: true, width: "120px" },
-    { field: "rule_id", name: "Rule ID", sortable: true, width: "90px" },
+    { field: "timestamp", name: "Time", render: fmtTime, sortable: true, width: "170px" },
+    { field: "agent", name: "Agent", sortable: true, width: "110px" },
+    { field: "rule_id", name: "Rule ID", sortable: true, width: "80px" },
     {
       field: "level",
       name: "Severity",
@@ -54,8 +66,15 @@ export default function AlertsTable({
       field: "category",
       name: "Category",
       sortable: true,
-      width: "150px",
-      render: (c) => c ?? "—",
+      width: "140px",
+      render: (c) => (c ? c.replace(/_/g, " ") : "—"),
+    },
+    {
+      field: "mitre",
+      name: "MITRE",
+      sortable: true,
+      width: "100px",
+      render: (id, a) => <MitreLink id={id} tactic={a.tactic} />,
     },
     showSource && {
       field: "source",
@@ -75,18 +94,35 @@ export default function AlertsTable({
       field: "srcip",
       name: "Source IP",
       sortable: true,
-      width: "130px",
-      // the IP pivot, without also opening the row's alert flyout
-      render: (ip) =>
+      width: "150px",
+      // the IP pivot, without also opening the row's alert
+      render: (ip, a) =>
         ip ? (
-          <EuiLink
-            onClick={(e) => {
-              e.stopPropagation();
-              openIp(ip);
-            }}
-          >
-            {ip}
-          </EuiLink>
+          <span>
+            <EuiLink
+              onClick={(e) => {
+                e.stopPropagation();
+                openIp(ip);
+              }}
+            >
+              {ip}
+            </EuiLink>
+            {a.blocked && (
+              <>
+                {" "}
+                <EuiIconTip
+                  type="lock"
+                  color={a.blocked.unblock_unconfirmed ? "warning" : "danger"}
+                  content={
+                    a.blocked.unblock_unconfirmed
+                      ? "Unblock sent but not confirmed — the drop may still be in place"
+                      : `Blocked on agent ${a.blocked.agent_id} since ${fmtTime(a.blocked.since)}`
+                  }
+                  aria-label="blocked"
+                />
+              </>
+            )}
+          </span>
         ) : (
           "—"
         ),
@@ -95,7 +131,7 @@ export default function AlertsTable({
 
   if (showScore) {
     columns.splice(
-      4,
+      5,
       0,
       {
         field: "score",
@@ -137,11 +173,10 @@ export default function AlertsTable({
         pagination={{ initialPageSize: 25, pageSizeOptions: [10, 25, 50] }}
         sorting={{ sort: { field: "timestamp", direction: "desc" } }}
         rowProps={(item) => ({
-          onClick: () => setSelected(item),
+          onClick: () => openAlert(item),
           style: { cursor: "pointer" },
         })}
       />
-      <AlertFlyout alert={current} onClose={() => setSelected(null)} onRefresh={onRefresh} />
     </>
   );
 }

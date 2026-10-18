@@ -15,8 +15,8 @@ import { getCombined } from "../api";
 import { usePolling } from "../lib/usePolling";
 import { scopeParams, scopeDeps } from "../lib/scope";
 import { usePalette } from "../theme/ThemeProvider";
+import { useNav } from "../lib/nav";
 import { SeverityBadge } from "../components/badges";
-import AlertFlyout from "../components/AlertFlyout";
 import Dot from "../components/Dot";
 
 const LIMIT = 300;
@@ -70,12 +70,12 @@ function Card({ alert, color, missed, missedColor, onOpen }) {
 // side is one the signature ruleset stayed silent on.
 export default function DetectionSplit({ scope }) {
   const p = usePalette();
+  const { openAlert } = useNav();
   const narrow = useIsWithinBreakpoints(["xs", "s"]);
   const [alerts, setAlerts] = useState(null);
   const [error, setError] = useState(null);
-  const [selected, setSelected] = useState(null);
 
-  const refresh = usePolling(
+  usePolling(
     async (isCurrent) => {
       try {
         const c = await getCombined({ limit: LIMIT, ...scopeParams(scope) });
@@ -102,7 +102,6 @@ export default function DetectionSplit({ scope }) {
   const ruleCount = (alerts ?? []).filter((a) => a.source !== "ai").length;
   const aiCount = (alerts ?? []).length - ruleCount;
   const aiOnly = rows.filter(([, b]) => b.ai.length && !b.rule.length).length;
-  const current = selected ? (alerts?.find((a) => a.id === selected.id) ?? selected) : null;
   const grid = { display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 130px 1fr", columnGap: 12 };
 
   const stats = [
@@ -172,7 +171,7 @@ export default function DetectionSplit({ scope }) {
             <div key={minute} style={{ ...grid, alignItems: "center", padding: "2px 0" }}>
               <div>
                 {b.rule.map((a) => (
-                  <Card key={a.id} alert={a} color={p.rule} onOpen={setSelected} />
+                  <Card key={a.id} alert={a} color={p.rule} onOpen={openAlert} />
                 ))}
                 {gap && !narrow && (
                   <EuiText size="xs" color="subdued" textAlign="right">
@@ -191,7 +190,7 @@ export default function DetectionSplit({ scope }) {
                     color={p.ai}
                     missed={gap}
                     missedColor={p.ai}
-                    onOpen={setSelected}
+                    onOpen={openAlert}
                   />
                 ))}
               </div>
@@ -199,7 +198,6 @@ export default function DetectionSplit({ scope }) {
           );
         })}
       </EuiPanel>
-      <AlertFlyout alert={current} onClose={() => setSelected(null)} onRefresh={refresh} />
     </>
   );
 }

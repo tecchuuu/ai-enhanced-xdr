@@ -7,14 +7,9 @@ import {
   Position,
   niceTimeFormatter,
 } from "@elastic/charts";
-import {
-  EuiPanel,
-  EuiTitle,
-  EuiText,
-  EuiSpacer,
-  EuiEmptyPrompt,
-} from "@elastic/eui";
+import { EuiPanel, EuiSpacer, EuiEmptyPrompt } from "@elastic/eui";
 import { useTheme, usePalette, useChartTheme } from "../theme/ThemeProvider";
+import PanelTitle from "./PanelTitle";
 
 // buckets/interval from /api/alerts/histogram; from/to (ms) are the range it
 // was asked for, so the axis spans the selected range even when it's sparse
@@ -28,16 +23,10 @@ export default function AlertsOverTime({ buckets, interval, from, to }) {
 
   return (
     <EuiPanel hasBorder>
-      <EuiTitle size="xs">
-        <h2>Alerts over time</h2>
-      </EuiTitle>
-      <EuiText size="s" color="subdued">
-        <p>
-          Rule alerts (level 10+) and AI detections per {interval ?? "interval"}.
-          A teal bar with no orange beside it = the model caught something the
-          ruleset stayed silent on.
-        </p>
-      </EuiText>
+      <PanelTitle
+        title="Alerts over time"
+        info={`Rule alerts (level 10+) and AI detections, stacked per ${interval ?? "interval"}. An interval with AI detections and no rule alerts is one the model flagged while the ruleset stayed silent.`}
+      />
       <EuiSpacer size="s" />
       <div style={{ height: 260 }}>
         {hasData ? (
@@ -79,7 +68,7 @@ export default function AlertsOverTime({ buckets, interval, from, to }) {
           </Chart>
         ) : (
           <EuiEmptyPrompt
-            iconType="visBarVertical"
+            iconType="chartBarVertical"
             titleSize="xs"
             title={<h3>No alerts in this range</h3>}
             body={

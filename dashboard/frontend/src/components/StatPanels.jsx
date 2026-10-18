@@ -4,6 +4,7 @@ import {
   EuiPanel,
   EuiStat,
   EuiText,
+  EuiIconTip,
 } from "@elastic/eui";
 import { usePalette } from "../theme/ThemeProvider";
 import Dot from "./Dot";
@@ -66,16 +67,16 @@ export default function StatPanels({ metrics }) {
             description={
               <>
                 <Dot color={p.ai} />
-                Minutes AI-only (rules silent)
+                Minutes AI-only (rules silent){" "}
+                <EuiIconTip
+                  type="info"
+                  color="subdued"
+                  aria-label="About AI-only minutes"
+                  content="Minutes in this range where the model flagged a window and no level 10+ rule fired — what signature detection missed."
+                />
               </>
             }
           />
-          <EuiText size="xs" color="subdued">
-            <p>
-              Minutes in this range where the model flagged a window and no
-              level 10+ rule fired — what signature detection missed.
-            </p>
-          </EuiText>
         </EuiPanel>
       </EuiFlexItem>
     </EuiFlexGroup>
