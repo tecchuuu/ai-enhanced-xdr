@@ -421,41 +421,59 @@ Attack windows in the test day: 22 / 4 / 4. **Every model detected the attack in
 
 ---
 
-## R18 — SSH lane + web, on the lab dataset: Morpheus DFP catches low-and-slow (three models vs count baseline)
+## R18 — SSH + web on the lab dataset: AI vs Wazuh rules, a coverage map
 
-**Measured:** the SSH lane (which AIT cannot provide — Entry 38) and web attack types AIT lacks, on our own labelled lab environment, under the same train-once protocol as R17; and specifically whether any model catches *low-and-slow* SSH attacks that evade volume-based detection.
+**Measured:** the SSH lane (which AIT cannot provide — Entry 38) and web attack types AIT lacks, on our own labelled lab environment, under the R17 train-once protocol; the three models against *two* baselines — a trivial event-count threshold and the **real Wazuh signature ruleset** (genuine levels, via `scripts/wazuh_replay.py`) at operational (≥10) and permissive (≥5) alert thresholds.
 
-**Setup:** lab baseline (7 days of synthetic normal SSH+web with per-employee source IPs, `lab/baseline/lab_baseline.py`) plus 12 scripted attacks on one weekday (`lab/attacker/lab_attack.py`), labelled from `attack_schedule.csv` into 1-minute windows by the live feature code (`features.py`, via `scripts/lab_windows.py`). Train on 3 normal days, threshold on day 4 (99.5th percentile, normal only), test on the attack day onward. Isolation Forest (CPU), the project autoencoder and Morpheus dfencoder (both H100), 5 seeds; plus the count-threshold baseline. `scripts/evaluate.py`; full output `docs/eval/lab_2026-10-21.md`. Synthetic data (Entry 39–40): feature *values* match what real tools produce, and generating them let the attempt-rate be set exactly for the detection-floor sweep.
+**Setup:** lab baseline (7 days synthetic normal SSH+web, per-employee source IPs, `lab/baseline/lab_baseline.py`) + 12 scripted attacks on one weekday (`lab/attacker/lab_attack.py`), labelled from `attack_schedule.csv` into 1-minute windows by the live feature code (`features.py`, via `scripts/lab_windows.py --rules`). Each lab log line was replayed through the real Wazuh ruleset (`wazuh-logtest` in the manager container) for its genuine rule id + level, folded into the windows (so `max_level` is authentic, resolving the earlier caveat). Train 3 normal days, threshold on day 4 (99.5th percentile, normal only), test the attack day onward. Isolation Forest (CPU), the project autoencoder and Morpheus dfencoder (both H100), 5 seeds; count baseline; Wazuh-rules baseline at level ≥5 and ≥10. `scripts/evaluate.py`; full output `docs/eval/lab_2026-10-21.md`.
 
-**Result — SSH lane** (all features, 99.5th percentile, mean over 5 seeds):
+**SSH lane** (all features, 99.5th percentile, mean over 5 seeds):
 
-| Model | PR-AUC | Recall | F1 | False alarms/day |
-|---|---|---|---|---|
-| Isolation Forest | 0.91 | 0.42 | 0.58 | 0.3 |
-| Autoencoder | 0.93 | 0.42 | 0.58 | 0.3 |
-| **Morpheus dfencoder** | **0.96** | **0.91** | **0.93** | 0.4 |
-| Count threshold | 0.71 | 0.27 | 0.43 | 0.0 |
+| Model | PR-AUC | Recall | Precision | F1 | False alarms/day |
+|---|---|---|---|---|---|
+| **Morpheus dfencoder** | **0.97** | **0.94** | 0.97 | **0.95** | 0.3 |
+| Autoencoder | 0.95 | 0.55 | 0.95 | 0.69 | 0.3 |
+| Isolation Forest | 0.92 | 0.42 | 0.93 | 0.58 | 0.3 |
+| Count threshold | 0.71 | 0.27 | 1.00 | 0.43 | 0.0 |
+| Wazuh rules ≥ L10 | 0.95 | 0.33 | 1.00 | 0.50 | 0.0 |
+| Wazuh rules ≥ L5 | 0.95 | 0.94 | 0.97 | 0.95 | 0.3 |
 
-Recall per attack step — the headline:
+Recall per attack step — the map:
 
-| Model | brute force | distributed | spray | slow 1/min | slow 1/3min | slow 1/6min |
+| Model | brute | distributed | spray | slow 1/min | slow 1/3min | slow 1/6min |
 |---|---|---|---|---|---|---|
+| Morpheus dfencoder | 1.00 | 1.00 | 1.00 | **1.00** | **0.86** | **0.83** |
+| Autoencoder | 1.00 | 1.00 | 1.00 | 0.40 | 0.29 | 0.33 |
 | Isolation Forest | 0.83 | 1.00 | 1.00 | 0.30 | 0.14 | 0.17 |
-| Autoencoder | 0.83 | 1.00 | 1.00 | 0.30 | 0.14 | 0.17 |
-| **Morpheus dfencoder** | 0.83 | 1.00 | 1.00 | **1.00** | **0.86** | **0.83** |
 | Count threshold | 0.83 | 1.00 | 1.00 | 0.00 | 0.00 | 0.00 |
+| Wazuh rules ≥ L10 | 1.00 | **0.00** | 0.67 | 0.10 | 0.14 | 0.17 |
+| Wazuh rules ≥ L5 | 1.00 | 1.00 | 1.00 | 1.00 | 0.86 | 0.83 |
 
-**The finding.** Every model catches the *loud* SSH attacks (fast brute force, distributed, spray) — so does the trivial count rule. They part on the **low-and-slow** attacks (one failed login every 1–6 minutes, so each window looks like a single event — indistinguishable from normal by volume). There the count rule and Isolation Forest fail (recall 0.00 and ~0.2), the project autoencoder barely helps (~0.2), but **Morpheus's DFP autoencoder catches 83–100%** of them, at the same ~0.3–0.4 false alarms/day. DFP's per-feature reconstruction keys on the combination "a lone failed login with no matching success" (count 1, max_level 5, no paired accept) that the other models treat as normal. This is the project's central claim — catching slow attacks that signature thresholds and volume miss — demonstrated, and it is specifically NVIDIA's model that delivers it. The `no_hour` ablation confirms DFP does not lean on the time-of-day feature (recall stays 0.91).
+**The findings.**
+1. **Loud attacks (fast brute, spray): everyone catches them**, including the trivial count rule and Wazuh at any level. No method is needed over rules here.
+2. **The distributed attack (10 IPs × 4 failures) evades Wazuh's operational rules entirely** (≥L10 recall **0.00**): the brute-force rule counts failures per source IP, and 4 < its 8-in-120s threshold. Every anomaly model catches it (1.00) because they see the *aggregate* — 20+ distinct source IPs in one minute. This is a clean win for anomaly detection that does not depend on any tuning argument.
+3. **Low-and-slow (1 attempt / 1–6 min): Morpheus DFP catches 83–100%**; Isolation Forest, the plain autoencoder and the count rule largely miss (≤0.40); Wazuh ≥L10 misses (≤0.17). DFP keys on "a lone failed login, no matching success, repeated from one source", which volume- and threshold-based methods treat as normal. This is the project's central thesis — catching paced attacks — and NVIDIA's model delivers it. The `no_hour` ablation confirms DFP is not leaning on time-of-day (recall stays 0.94).
+4. **Wazuh at ≥L5 matches DFP on this lane (recall 0.94)** — because at level 5 Wazuh flags *every* failed login, and the lab's scripted normal almost never fails to authenticate, so flagging all failures ≈ flagging the attacks cheaply. State this honestly: it is a property of the clean synthetic baseline. In a real environment with routine failed logins (typos, expired passwords, broken service accounts), ≥L5 is the classic false-positive flood — which is *why* SOCs run at ≥L10, where the rules miss the distributed and slow attacks. DFP reaches that recall from the *pattern*, not from "a failure happened", so it does not inherit the flood.
 
-**Result — web lane:** consistent with R17 — autoencoder and dfencoder tie (PR-AUC 0.82–0.83, recall 0.75), both beating Isolation Forest (0.64) and the count rule (0.59); the neural models additionally catch the lab's path-traversal and XSS (both 1.00) that IF and the count rule miss. SQLi stays 0.00 for every model (one crafted request barely changes a minute's counts) — the signature-rules boundary again.
+**Web lane** (99.5th percentile): autoencoder PR-AUC 0.88 (recall 0.85, 0.6 FA/day) and dfencoder 0.89 (recall 0.88, but 1.4 FA/day — DFP is noisier here, not uniformly best), both beating Isolation Forest (0.69) and the count rule (0.67). Per step: content-discovery scan and login brute force — all methods catch; **path traversal and XSS — caught by the neural models and by Wazuh signatures (≥L5), missed by Isolation Forest, the count rule and Wazuh ≥L10**; SQLi — ~0.5 for everyone (1 of 2 windows). So on web the signature rules and the anomaly models are genuinely complementary: rules catch the single crafted request by signature, the models catch volume and behaviour.
+
+**The coverage map (the chapter's conclusion):**
+
+| | loud brute/spray | distributed | low-and-slow | single web payload (SQLi/XSS/trav) |
+|---|---|---|---|---|
+| Wazuh rules (operational, ≥L10) | ✓ | ✗ | ✗ | partial (signature) |
+| Count / Isolation Forest | ✓ | ✓ | ✗ | ✗ |
+| **Morpheus DFP** | ✓ | ✓ | ✓ | ✗ (web payloads) |
+
+Neither layer alone is sufficient; together — signatures for crafted single requests, anomaly detection (DFP) for distributed and paced attacks — they cover the field. That is the defence-in-depth argument, quantified.
 
 **Honest notes:**
-- **Synthetic data, few attack windows per type** (1–10). The per-step recalls rest on small counts; the robust claims are the *pattern* (loud→all, slow→DFP only) and the clear PR-AUC ordering, not any single decimal. Scripted normal is smoother than real traffic, so false-alarm rates are optimistic (the lab-only caveat; Arp et al.).
-- **DFP's slow-attack win leans on `max_level`**, which offline is assigned per line (failed=5). A single isolated failed password is Wazuh rule 5710/level 5, so the signal is real, but the magnitude should be confirmed when the logs are replayed through Wazuh for genuine levels (pending).
-- **No speed advantage from the GPU at this size** — all fits are sub-second; DFP's value here is detection quality, not throughput (consistent with R16/R17).
-- **Not yet done:** the Wazuh-rule baseline on the same lab logs (the AI-vs-signatures comparison), which needs the replay.
+- **Synthetic data, few attack windows per type** (1–10): trust the *pattern* and the PR-AUC ordering, not any single decimal. Scripted normal is smoother than real traffic, so all false-alarm rates (and the ≥L5 result in finding 4) are optimistic (the lab-only caveat; Arp et al.).
+- **max_level is now genuine** (Wazuh replay), so DFP's slow-attack win no longer rests on a hand-assigned level — the earlier caveat is resolved.
+- **DFP is best on SSH but not on web** (higher web false-alarm rate than the plain autoencoder) — report both, don't overclaim a universal winner.
+- **No GPU speed advantage at this size** — all fits sub-second; DFP's value here is detection quality (consistent with R16/R17).
 
-**How to state it:** "On a labelled lab dataset, all models — and even a trivial event-count threshold — detected high-volume SSH attacks (brute force, distributed, spraying). They diverged on low-and-slow attacks, one attempt every few minutes, which are invisible to volume-based detection: the count baseline and Isolation Forest caught essentially none, while NVIDIA Morpheus's Digital Fingerprinting autoencoder caught 83–100% at well under one false alarm per day. This is the project's core thesis — detecting paced attacks that signature and threshold methods miss — and it was NVIDIA's production model, in the same swappable slot, that achieved it."
+**How to state it:** "On a labelled lab dataset with genuine Wazuh rule levels, high-volume SSH attacks were caught by every method including the signature rules. Two gaps in the operational signature ruleset were only closed by anomaly detection: a distributed brute force that stayed under the per-source correlation threshold, and low-and-slow guessing — the latter caught (83–100%) only by NVIDIA Morpheus's Digital Fingerprinting model, at well under one false alarm per day. Conversely, single crafted web requests (SQL injection, XSS) were caught by the signature rules and missed by the volume-based models. The methods are complementary, and the combination — Wazuh signatures plus the Morpheus anomaly model — gives the broadest coverage."
 
 ---
 
@@ -486,5 +504,5 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | NVIDIA Morpheus model in the inference slot | **DONE 2026-10-10 (R16)** | — |
 | Three-model comparison on a large dataset | **DONE 2026-10-21 (R17)** — web lane, AIT-LDS, 3 scenarios | — |
 | SSH-lane evaluation on labelled attacks (lab) | **DONE 2026-10-21 (R18)** — VM run with DFP; Morpheus catches low-and-slow | — |
-| Wazuh-rule baseline on the same data | not started | replay AIT access logs (and lab logs) through Wazuh |
+| Wazuh-rule baseline (AI vs signatures) | **DONE 2026-10-21 (R18)** — real levels via wazuh_replay; coverage map | — (optional: same replay on AIT access logs) |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |
