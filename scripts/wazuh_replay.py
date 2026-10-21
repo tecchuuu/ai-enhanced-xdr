@@ -46,13 +46,16 @@ def parse_ts(line, lane):
 
 
 def run_logtest(lines, container):
-    """Feed all lines through one wazuh-logtest session; return its stdout."""
+    """Feed all lines through one wazuh-logtest session; return its output.
+    stderr is merged into stdout because wazuh-logtest writes its phase output
+    to stderr."""
     proc = subprocess.run(
         ["docker", "exec", "-i", container, LOGTEST],
-        input="\n".join(lines) + "\n", capture_output=True, text=True,
+        input="\n".join(lines) + "\n",
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
-    if proc.returncode != 0 and not proc.stdout:
-        sys.exit(f"wazuh-logtest failed:\n{proc.stderr}")
+    if not proc.stdout:
+        sys.exit(f"wazuh-logtest produced no output (exit {proc.returncode})")
     return proc.stdout
 
 
@@ -72,6 +75,9 @@ def main():
 
     # one block per input line; each starts at "**Phase 1" and echoes "full event:"
     blocks = out.split("**Phase 1: Completed pre-decoding.")[1:]
+    if not blocks:
+        sys.exit("no '**Phase 1' blocks in the logtest output — the format is "
+                 f"unexpected. First 800 chars:\n{out[:800]}")
     if len(blocks) != len(lines):
         print(f"warning: {len(lines)} lines but {len(blocks)} logtest blocks — "
               f"pairing by the echoed full event instead of position")
