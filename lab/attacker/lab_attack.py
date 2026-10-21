@@ -76,6 +76,10 @@ def _ssh_accept(t, rng, user, ip):
 
 def _req(t, rng, ip, method, url, status):
     size = rng.randint(120, 700)
+    # a real client percent-encodes spaces; an access-log request field with raw
+    # spaces is malformed and Wazuh's web decoder (rightly) rejects it. Encode
+    # spaces so the payloads log — and decode — the way sqlmap/gobuster's would.
+    url = url.replace(" ", "%20")
     return f'{ip} - - {access_ts(t)} "{method} {url} HTTP/1.1" {status} {size} "-" "{UA}" {ATTACK_TAG}'
 
 
