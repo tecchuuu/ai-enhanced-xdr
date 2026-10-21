@@ -52,6 +52,10 @@ holds (never mix lanes):
 - **Network lane** → **out of scope** (decided 2026-10-17; failure log Entry 32). The
   BlueField-3 DPU it was meant to run on was provisioned but never reachable (host `rshim`
   driver broken; failure log Entry 27). No network dataset is needed.
+- **Chosen (2026-10-21; failure log Entry 36):** AIT-LDS v2.0 for both lanes (raw
+  auth.log + Apache access logs, normal days, line-level labels) plus our own scripted lab
+  attacks for what AIT lacks (SSH brute force / spraying, SQLi, XSS). Comparison and the
+  "why not CIC-IDS / LANL / CSIC" answers: `docs/dataset_selection.md`.
 
 ## 3. LLM is a READER, not a pipeline stage — LIVE on the H100
 The LLM consumes existing `ai-detections-*` docs and writes a 2-sentence analyst

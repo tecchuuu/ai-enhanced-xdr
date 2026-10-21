@@ -114,7 +114,8 @@ Full reasoning is in `docs/`: `project_plan.md` (original architecture plan),
 `results_log.md` (claims, metrics, and evidence), `ROADMAP.md` (what's next and
 how the deferred pieces attach), `dashboard-build-notes.md` (console additions
 and their contracts), `security.md` (what the console protects against, known
-gaps, production tiering). Deploying on the SIAM VM: `SETUP.md`.
+gaps, production tiering), `dataset_selection.md` (which datasets the evaluation uses,
+why, and the evaluation protocol). Deploying on the SIAM VM: `SETUP.md`.
 
 **Test traffic:** attack scenarios were generated with local scripts (not
 committed) — any SSH brute-force source works to reproduce, e.g. repeated
