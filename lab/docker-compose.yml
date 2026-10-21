@@ -1,0 +1,24 @@
+# Lab test environment — separate from the detection stack (ai-stack.yml) on
+# purpose: it produces the labelled SSH/web data the evaluation needs, and must
+# not entangle with the live pipeline. The attacker joins here later.
+#
+# lab-baseline generates "normal" SSH + web logs (lab/baseline/lab_baseline.py)
+# into LAB_LOGS_DIR on the big disk, a minute at a time, and restarts on reboot.
+# Run it for ~3 days before any attack (2 days to train on, 1 to set the
+# threshold). It opens no ports and needs no network; Wazuh need not be up for
+# the baseline to accumulate.
+#
+#   cd lab && docker compose -p luckyfive_lab up -d --build
+#   docker logs -f luckyfive_lab-lab-baseline-1
+#   # 3 days later, the logs are in $LAB_LOGS_DIR (default /LuckyFive/lab/logs)
+#
+# To fast-forward instead of waiting 3 days, run the generator directly (not via
+# this service): see lab/README.md.
+services:
+  lab-baseline:
+    build: ./baseline
+    image: luckyfive/lab-baseline
+    restart: unless-stopped
+    command: ["--mode", "realtime", "--out", "/logs", "--seed", "1337"]
+    volumes:
+      - ${LAB_LOGS_DIR:-/LuckyFive/lab/logs}:/logs
