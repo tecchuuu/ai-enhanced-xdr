@@ -130,6 +130,8 @@ services:
       dockerfile: ai-stack/morpheus/Dockerfile
     image: luckyfive/morpheus-auth
     init: true                           # PID 1 that forwards docker stop to Python
+    cap_add:
+      - SYS_NICE                         # lets Morpheus's engine pin thread memory (else a startup warning)
     working_dir: /app/ai-stack/morpheus
     command: ["${MORPHEUS_CONDA:-/LuckyFive/miniforge3}/envs/morpheus/bin/python", "auth_pipeline.py", "--cpu"]
     volumes:
