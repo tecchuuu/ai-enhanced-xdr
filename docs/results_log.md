@@ -386,6 +386,41 @@ Pairwise agreement:
 
 ---
 
+## R17 — Web lane on a public labelled dataset: three models vs a count baseline (AIT-LDS)
+
+**Measured:** detection quality of the three inference-slot models on public, labelled data the project did not generate — the R16 re-run "on a substantially larger dataset" — under a protocol fixed before looking at test labels (failure log Entries 36, 38; `docs/dataset_selection.md`).
+
+**Setup:** AIT-LDS v2.1 (Landauer et al., IEEE TDSC 2023), scenarios fox (loud daytime scan), russellmitchell (night attack) and santos (quiet daytime scan); the attacked WordPress server's Apache access log, folded into 1-minute windows by the live detector's own feature code (`features.py`, via `scripts/ait_windows.py`). Train-once: fit on simulation days 1–2 (normal only), threshold = 99.5th percentile of each model's scores on day 3 (normal only), test on day 4 onwards. Isolation Forest (CPU), the project's autoencoder and Morpheus dfencoder (both on the H100), 5 seeds each, plus a plain request-count threshold under the same rule. `scripts/evaluate.py`; full output `docs/eval/ait_web_2026-10-21.md`.
+
+**Result** (all features, 99.5th-percentile threshold, mean over seeds):
+
+| Model | PR-AUC fox / russellmitchell / santos | Recall | False alarms per day |
+|---|---|---|---|
+| Isolation Forest | 0.93 / 0.67 / 0.37 | 0.91 / 0.55 / 0.25 | 1.5 / 1.0 / 0.0 |
+| Autoencoder | 0.93 / 0.65 / 0.56 | 0.91 / 0.50 / 0.50 | 2.4 / 2.6 / 0.2 |
+| **Morpheus dfencoder** | **0.93 / 0.80 / 0.62** | **0.91 / 0.60 / 0.55** | 0.7 / 1.2 / 1.6 |
+| Count threshold (baseline) | 0.93 / 0.57 / 0.32 | 0.91 / 0.50 / 0.25 | 2.5 / 0.0 / 0.0 |
+
+Attack windows in the test day: 22 / 4 / 4. **Every model detected the attack in every scenario and every seed, within one minute of its first labelled request.**
+
+**Findings:**
+1. **Loud attacks don't need AI.** On fox (20 dirb windows) all four methods tie on recall and PR-AUC — request volume alone finds the scan. What the models add there is fewer false alarms: Morpheus dfencoder 0.7/day (0.3 without `hour`) against 2.5/day for the count rule.
+2. **Quieter attacks are where the models earn their place.** On santos the count rule and Isolation Forest catch only the dirb minute (recall 0.25); both neural models also catch the service scan (0.50–0.55), at 0–1.6 false alarms a day. PR-AUC roughly doubles (0.32 → 0.62).
+3. **Morpheus dfencoder had the best or tied-best PR-AUC in every scenario** — the first evidence in this project that NVIDIA's model is not just a drop-in (R16) but the strongest of the three on this lane. Its false-alarm rate is not uniformly lowest (santos: 1.6/day vs the autoencoder's 0.2).
+4. **The `hour` feature is not doing the work in daytime scenarios.** Removing it barely moves fox or santos. In the night scenario it does: without it every model falls back to the two loud minutes (recall 0.50) — the risk flagged in Entry 36, now measured.
+5. **Blind spot: single low-volume requests.** Webshell commands and the privilege-escalation step are almost never caught by any model — one request barely changes a minute's counts. That is a property of window-count features, not of a model, and it is the job of payload signatures (Wazuh rules); a residual risk to state in บทที่ 5.
+6. **Speed is not the GPU's advantage at this size.** Fits take 0.06 s (Isolation Forest, CPU), ~0.2 s (autoencoder, H100) and 0.4–0.8 s (dfencoder, H100). On a few hundred windows a GPU buys nothing; the case for Morpheus here is detection quality, not throughput.
+
+**Honest notes:**
+- **Few attack windows.** 4 per scenario in two of three (22 in fox), so recall moves in steps of 0.25 and per-step recall rests on 1–2 windows. "Detected / time to detect" and the per-scenario pattern are more robust than any single recall figure.
+- **Simulated normal users.** AIT's background traffic is scripted; real traffic is noisier, so these false-alarm rates are likely optimistic.
+- **The count baseline is strong by design** (Arp et al.): it ties or beats the models on fox and russellmitchell's loud minutes. Reported, not hidden — it is what makes finding 2 meaningful.
+- **No Wazuh-rule comparison yet** — that needs the AIT logs replayed through Wazuh. The SSH lane is not covered by AIT (Entry 38) and is evaluated on lab data.
+
+**How to state it:** "On a public, labelled dataset, all three models detected the multi-step web attack in all three scenarios within a minute, at a few false alarms per day or fewer. A simple request-count threshold matched them on loud scanning; the neural models' advantage appeared on the quieter attack, where they also caught the service scan the count rule and Isolation Forest missed, and NVIDIA Morpheus's DFP autoencoder achieved the best or tied-best precision–recall performance in every scenario. Single low-volume malicious requests remained largely undetected by window-level features, which defines the complementary role of signature rules."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
@@ -411,5 +446,7 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | Autoencoder comparison vs Isolation Forest | **DONE 2026-09-09 (R12)** | — |
 | Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
 | NVIDIA Morpheus model in the inference slot | **DONE 2026-10-10 (R16)** | — |
-| Three-model comparison on a large dataset | not started | a dataset of thousands of windows |
+| Three-model comparison on a large dataset | **DONE 2026-10-21 (R17)** — web lane, AIT-LDS, 3 scenarios | — |
+| SSH-lane evaluation on labelled attacks (lab) | not started | lab normal-traffic generator (3 days) + scripted attacks with a schedule |
+| Wazuh-rule baseline on the same data | not started | replay AIT access logs (and lab logs) through Wazuh |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |
