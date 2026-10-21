@@ -16,7 +16,7 @@ because the dataset is small and the baseline is short-lived. The architecture i
 equivalent; the separation is a scale concern, not a correctness one.
 """
 
-import os, re, signal, sys, time
+import os, signal, sys, time
 from collections import defaultdict
 from pathlib import Path
 
@@ -32,10 +32,12 @@ from models import get_model
 from opensearchpy import OpenSearch, helpers
 
 from consumer_common import (ai_index, decode_event, fit_evidence, heartbeat,
-                             note_agent, top_agent, window_features)
+                             note_agent, top_agent)
 # the window/feature definition, shared with the offline evaluation
 from features import (AUTH_FEATURES as FEATURES, WINDOW_SEC, auth_row,
                       fold_auth, new_auth_window, window_key)
+# event reading + detection document, shared with the Morpheus pipeline
+from auth_lane import detection_doc, parse_auth_event
 
 # ----------------------------------------------------------------- config
 # Kafka's address is configurable: on a shared VM another group's broker may own
@@ -51,8 +53,6 @@ CONSUMER_NAME  = "auth-detector"   # its status doc id in ai-pipeline-status
 
 # inference-slot model, swappable via DETECTOR_MODEL in dashboard/.env
 _MODEL = get_model(os.environ.get("DETECTOR_MODEL", "isolation_forest"))
-
-USER_RE = re.compile(r"(?:invalid user |user )([A-Za-z0-9_.-]+)")
 
 # ----------------------------------------------------------------- clients
 consumer = KafkaConsumer(
@@ -93,29 +93,12 @@ signal.signal(signal.SIGTERM, bye)      # docker stop
 def ingest(event):
     """Fold one Wazuh event into its time window."""
     global last_event_at
-    if event is None:                    # undecodable line (decode_event)
-        return
-    ts = event.get("timestamp")
-    if not ts:
-        return
-    try:
-        dt = pd.to_datetime(ts)
-    except Exception:
+    ev = parse_auth_event(event)
+    if ev is None:
         return
 
-    data = event.get("data", {})
-    # auth events carry srcip; web access events carry srcip AND url. Exclude the
-    # latter so the web lane does not leak into the auth model (see failure log).
-    if "srcip" not in data or "url" in data:
-        return
-
-    user = data.get("srcuser")
-    if not user:
-        m = USER_RE.search(event.get("full_log", "") or "")
-        user = m.group(1) if m else None
-
-    w = windows[window_key(dt)]
-    fold_auth(w, data["srcip"], event.get("rule", {}).get("level", 0), user)
+    w = windows[window_key(ev.dt)]
+    fold_auth(w, ev.srcip, ev.level, ev.user)
     note_agent(w, event)
     last_event_at = datetime.now(timezone.utc).isoformat()
 
@@ -128,30 +111,6 @@ def build_frame():
         row["agent"] = top_agent(w["agents"])
         rows.append(row)
     return pd.DataFrame(rows).sort_values("timestamp") if rows else pd.DataFrame()
-
-
-def categorize(r):
-    """Heuristic post-classification of an anomalous window.
-
-    The model only says "this window deviates from baseline"; these labels turn
-    that into something an analyst can triage. Pattern -> (category, MITRE, label).
-    """
-    if r.events_per_user >= 10 and r.distinct_users <= 3:
-        return "brute_force", "T1110.001", "brute-force pattern"
-    if r.distinct_users >= 5 and r.events_per_user <= 5:
-        return "password_spraying", "T1110.003", "password-spraying pattern"
-    if r.hour < 6 or r.hour >= 22:
-        return "suspicious_timing", "T1078", "off-hours activity"
-    return "unclassified_anomaly", None, "unclassified deviation"
-
-
-def severity(score):
-    """Map anomaly score to a Wazuh-convention level (more negative = worse)."""
-    if score < -0.60:
-        return 12
-    if score < -0.50:
-        return 10
-    return 7
 
 
 def beat(state, result):
@@ -189,35 +148,8 @@ def score_and_write():
     docs = []
     for _, r in hits.iterrows():
         already_flagged.add(r.key)
-        category, mitre, label = categorize(r)
-        docs.append({
-            "_index": index,
-            "_source": {
-                "timestamp": r.timestamp.isoformat(),
-                "source": "morpheus_ai",
-                "rule": {
-                    "id": "100001",
-                    "level": severity(r.score),
-                    "description": f"AI: anomalous authentication behaviour — {label}",
-                },
-                "ai": {
-                    "model":           _MODEL.label,
-                    "pipeline":        "kafka-streaming",
-                    "anomaly_score":   float(r.score),
-                    "window":          f"{WINDOW_SEC}s",
-                    "event_count":     int(r.event_count),
-                    "distinct_users":  int(r.distinct_users),
-                    "events_per_user": float(r.events_per_user),
-                    "category":        category,
-                    "mitre":           mitre,
-                    "top_srcips":      [{"ip": ip, "count": n} for ip, n in r.top_ips],
-                    # why it fired: this window vs the un-flagged ones, and the cutoff
-                    "features":        window_features(r, FEATURES),
-                    **evidence,
-                },
-                "agent": r.agent,
-            },
-        })
+        docs.append(detection_doc(r, index, _MODEL.label, "kafka-streaming",
+                                  FEATURES, evidence))
 
     helpers.bulk(os_client, docs)
     os_client.indices.refresh(index=index)

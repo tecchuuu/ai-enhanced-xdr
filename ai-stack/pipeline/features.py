@@ -119,3 +119,22 @@ def auth_row(key, w):
         "events_per_user": round(w["count"] / users, 2) if users else w["count"],
         "top_ips":         w["ips"].most_common(5),
     }
+
+
+def auth_frame(events):
+    """auth_row for every window at once, as one groupby over a table of events.
+
+    events: a pandas *or* cuDF DataFrame with columns key, srcip, user (may be
+    null), level (may be null). The Morpheus pipeline runs this on the GPU with
+    cuDF; the numbers equal folding the same events one by one with fold_auth
+    (tested both ways). Returns key + AUTH_FEATURES, sorted by key.
+    """
+    ev = events.assign(level=events["level"].fillna(0))
+    out = ev.groupby("key").agg({"srcip": "count", "user": "nunique", "level": "max"})
+    out = out.rename(columns={"srcip": "event_count", "user": "distinct_users",
+                              "level": "max_level"}).reset_index().sort_values("key")
+    out["max_level"] = out["max_level"].astype("int64")      # levels are whole numbers
+    out["hour"] = (out["key"] * WINDOW_SEC // 3600) % 24
+    per_user = (out["event_count"] / out["distinct_users"]).round(2)
+    out["events_per_user"] = per_user.where(out["distinct_users"] > 0, out["event_count"])
+    return out.reset_index(drop=True)[["key"] + AUTH_FEATURES]
