@@ -421,6 +421,44 @@ Attack windows in the test day: 22 / 4 / 4. **Every model detected the attack in
 
 ---
 
+## R18 — SSH lane + web, on the lab dataset: Morpheus DFP catches low-and-slow (three models vs count baseline)
+
+**Measured:** the SSH lane (which AIT cannot provide — Entry 38) and web attack types AIT lacks, on our own labelled lab environment, under the same train-once protocol as R17; and specifically whether any model catches *low-and-slow* SSH attacks that evade volume-based detection.
+
+**Setup:** lab baseline (7 days of synthetic normal SSH+web with per-employee source IPs, `lab/baseline/lab_baseline.py`) plus 12 scripted attacks on one weekday (`lab/attacker/lab_attack.py`), labelled from `attack_schedule.csv` into 1-minute windows by the live feature code (`features.py`, via `scripts/lab_windows.py`). Train on 3 normal days, threshold on day 4 (99.5th percentile, normal only), test on the attack day onward. Isolation Forest (CPU), the project autoencoder and Morpheus dfencoder (both H100), 5 seeds; plus the count-threshold baseline. `scripts/evaluate.py`; full output `docs/eval/lab_2026-10-21.md`. Synthetic data (Entry 39–40): feature *values* match what real tools produce, and generating them let the attempt-rate be set exactly for the detection-floor sweep.
+
+**Result — SSH lane** (all features, 99.5th percentile, mean over 5 seeds):
+
+| Model | PR-AUC | Recall | F1 | False alarms/day |
+|---|---|---|---|---|
+| Isolation Forest | 0.91 | 0.42 | 0.58 | 0.3 |
+| Autoencoder | 0.93 | 0.42 | 0.58 | 0.3 |
+| **Morpheus dfencoder** | **0.96** | **0.91** | **0.93** | 0.4 |
+| Count threshold | 0.71 | 0.27 | 0.43 | 0.0 |
+
+Recall per attack step — the headline:
+
+| Model | brute force | distributed | spray | slow 1/min | slow 1/3min | slow 1/6min |
+|---|---|---|---|---|---|---|
+| Isolation Forest | 0.83 | 1.00 | 1.00 | 0.30 | 0.14 | 0.17 |
+| Autoencoder | 0.83 | 1.00 | 1.00 | 0.30 | 0.14 | 0.17 |
+| **Morpheus dfencoder** | 0.83 | 1.00 | 1.00 | **1.00** | **0.86** | **0.83** |
+| Count threshold | 0.83 | 1.00 | 1.00 | 0.00 | 0.00 | 0.00 |
+
+**The finding.** Every model catches the *loud* SSH attacks (fast brute force, distributed, spray) — so does the trivial count rule. They part on the **low-and-slow** attacks (one failed login every 1–6 minutes, so each window looks like a single event — indistinguishable from normal by volume). There the count rule and Isolation Forest fail (recall 0.00 and ~0.2), the project autoencoder barely helps (~0.2), but **Morpheus's DFP autoencoder catches 83–100%** of them, at the same ~0.3–0.4 false alarms/day. DFP's per-feature reconstruction keys on the combination "a lone failed login with no matching success" (count 1, max_level 5, no paired accept) that the other models treat as normal. This is the project's central claim — catching slow attacks that signature thresholds and volume miss — demonstrated, and it is specifically NVIDIA's model that delivers it. The `no_hour` ablation confirms DFP does not lean on the time-of-day feature (recall stays 0.91).
+
+**Result — web lane:** consistent with R17 — autoencoder and dfencoder tie (PR-AUC 0.82–0.83, recall 0.75), both beating Isolation Forest (0.64) and the count rule (0.59); the neural models additionally catch the lab's path-traversal and XSS (both 1.00) that IF and the count rule miss. SQLi stays 0.00 for every model (one crafted request barely changes a minute's counts) — the signature-rules boundary again.
+
+**Honest notes:**
+- **Synthetic data, few attack windows per type** (1–10). The per-step recalls rest on small counts; the robust claims are the *pattern* (loud→all, slow→DFP only) and the clear PR-AUC ordering, not any single decimal. Scripted normal is smoother than real traffic, so false-alarm rates are optimistic (the lab-only caveat; Arp et al.).
+- **DFP's slow-attack win leans on `max_level`**, which offline is assigned per line (failed=5). A single isolated failed password is Wazuh rule 5710/level 5, so the signal is real, but the magnitude should be confirmed when the logs are replayed through Wazuh for genuine levels (pending).
+- **No speed advantage from the GPU at this size** — all fits are sub-second; DFP's value here is detection quality, not throughput (consistent with R16/R17).
+- **Not yet done:** the Wazuh-rule baseline on the same lab logs (the AI-vs-signatures comparison), which needs the replay.
+
+**How to state it:** "On a labelled lab dataset, all models — and even a trivial event-count threshold — detected high-volume SSH attacks (brute force, distributed, spraying). They diverged on low-and-slow attacks, one attempt every few minutes, which are invisible to volume-based detection: the count baseline and Isolation Forest caught essentially none, while NVIDIA Morpheus's Digital Fingerprinting autoencoder caught 83–100% at well under one false alarm per day. This is the project's core thesis — detecting paced attacks that signature and threshold methods miss — and it was NVIDIA's production model, in the same swappable slot, that achieved it."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
@@ -447,6 +485,6 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
 | NVIDIA Morpheus model in the inference slot | **DONE 2026-10-10 (R16)** | — |
 | Three-model comparison on a large dataset | **DONE 2026-10-21 (R17)** — web lane, AIT-LDS, 3 scenarios | — |
-| SSH-lane evaluation on labelled attacks (lab) | **method ready 2026-10-21** (lab baseline + attacker + loader built and dry-run locally; failure_log Entry 39–40) — authoritative VM run with DFP pending → R18 | run `scripts/evaluate.py` in the `morpheus` env on the VM |
+| SSH-lane evaluation on labelled attacks (lab) | **DONE 2026-10-21 (R18)** — VM run with DFP; Morpheus catches low-and-slow | — |
 | Wazuh-rule baseline on the same data | not started | replay AIT access logs (and lab logs) through Wazuh |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |
