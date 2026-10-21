@@ -5,6 +5,10 @@ Every detector implements the same contract:
     fit_score(X, contamination) -> (flags, scores)
         flags:  array of -1 (anomaly) / 1 (normal)
         scores: array of floats, LOWER = more anomalous
+        The live consumers' mode: refit on the rolling buffer every cycle.
+    fit(X) -> self, then score(X) -> scores (LOWER = more anomalous)
+        The evaluation's mode (scripts/evaluate.py): fit once on normal
+        windows, score later windows against it, threshold chosen outside.
     .name  : registry key
     .label : human name written into the detection document (ai.model)
 
@@ -35,12 +39,12 @@ _REGISTRY = {
     "morpheus_dfencoder": MorpheusDFEncoderDetector,
 }
 
-def get_model(name):
+def get_model(name, **kwargs):
     key = (name or "isolation_forest").strip().lower()
     if key not in _REGISTRY:
         raise ValueError(
             f"unknown DETECTOR_MODEL '{name}'; choices: {sorted(_REGISTRY)}")
-    return _REGISTRY[key]()
+    return _REGISTRY[key](**kwargs)
 
 def available():
     return sorted(_REGISTRY)

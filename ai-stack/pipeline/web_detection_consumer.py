@@ -25,7 +25,7 @@ SETUP (state in the report):
 """
 
 import os, re, signal, sys, time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,6 +37,9 @@ from opensearchpy import OpenSearch, helpers
 
 from consumer_common import (ai_index, decode_event, fit_evidence, heartbeat,
                              note_agent, top_agent, window_features)
+# the window/feature definition, shared with the offline evaluation
+from features import (WEB_FEATURES as FEATURES, WINDOW_SEC, fold_web,
+                      new_web_window, web_row, window_key)
 
 # one credential source for the whole project: dashboard/.env (git-ignored)
 load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
@@ -47,26 +50,17 @@ load_dotenv(Path(__file__).resolve().parents[2] / "dashboard" / ".env")
 # to connect at all, so the address in use is printed at startup.
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC          = "wazuh-archives"
-WINDOW_SEC     = 60      # aggregate events into 1-minute windows
 SCORE_EVERY    = 60      # attempt scoring every N seconds
 MIN_WINDOWS    = 10      # don't score until we have this many windows (else meaningless)
 MAX_WINDOWS    = 120     # rolling buffer size (2h at 1-min windows)
 CONTAMINATION  = 0.15
 CONSUMER_NAME  = "web-detector"    # its status doc id in ai-pipeline-status
 
-FEATURES = ["request_count", "distinct_urls", "error_ratio",
-            "not_found_count", "post_ratio", "requests_per_ip", "hour"]
-
 # inference-slot model, swappable via DETECTOR_MODEL in dashboard/.env
 _MODEL = get_model(os.environ.get("DETECTOR_MODEL", "isolation_forest"))
 
 # raw-line fallback: `IP - - [date] "GET /path HTTP/1.1" 404 512`
 ACCESS_RE    = re.compile(r'"(?P<method>[A-Z]+)\s+(?P<url>\S+)\s+HTTP/[\d.]+"\s+(?P<status>\d{3})')
-INJECTION_RE = re.compile(
-    r"(?i)(union\s+select|'\s*or\s*'?\s*1|<script|onerror=|\bexec\b|xp_cmdshell"
-    r"|%27|%3cscript|\bsleep\(|benchmark\(|information_schema)"
-)
-TRAVERSAL_RE = re.compile(r"(\.\./|\.\.\\|%2e%2e|/etc/passwd|\bboot\.ini\b|%00)")
 
 # ----------------------------------------------------------------- clients
 consumer = KafkaConsumer(
@@ -87,10 +81,7 @@ os_client = OpenSearch(
 
 # ----------------------------------------------------------------- state
 # window_key (epoch // WINDOW_SEC) -> accumulated stats
-windows = defaultdict(lambda: {"count": 0, "urls": Counter(), "ips": Counter(),
-                               "methods": Counter(), "statuses": Counter(),
-                               "injection": False, "traversal": False,
-                               "agents": Counter()})
+windows = defaultdict(new_web_window)
 already_flagged = set()
 consumed = 0     # every Kafka message seen
 web_seen = 0     # of those, the ones that were web access events
@@ -137,31 +128,10 @@ def ingest(event):
         method = method or m.group("method")
         status = status or m.group("status")
 
-    key = int(dt.timestamp()) // WINDOW_SEC
-    w = windows[key]
-    w["count"] += 1
-    w["urls"][url] += 1
+    w = windows[window_key(dt)]
+    fold_web(w, url, method, status, data.get("srcip"))
     note_agent(w, event)
     last_event_at = datetime.now(timezone.utc).isoformat()
-
-    srcip = data.get("srcip")
-    if srcip:
-        w["ips"][srcip] += 1
-    if method:
-        w["methods"][method.upper()] += 1
-
-    try:
-        code = int(status)
-    except (TypeError, ValueError):
-        code = 0
-    if code:
-        w["statuses"][code] += 1
-
-    if INJECTION_RE.search(url):
-        w["injection"] = True
-    if TRAVERSAL_RE.search(url):
-        w["traversal"] = True
-
     return True
 
 
@@ -169,26 +139,9 @@ def build_frame():
     """Turn accumulated windows into a feature table."""
     rows = []
     for key, w in windows.items():
-        dt = datetime.fromtimestamp(key * WINDOW_SEC, tz=timezone.utc)
-        count = w["count"]
-        distinct_ips = len(w["ips"])
-        errors = sum(n for code, n in w["statuses"].items() if 400 <= code < 600)
-        rows.append({
-            "key":             key,
-            "timestamp":       dt,
-            "request_count":   count,
-            "distinct_urls":   len(w["urls"]),
-            "error_ratio":     round(errors / count, 3) if count else 0.0,
-            "not_found_count": w["statuses"].get(404, 0),
-            "post_ratio":      round(w["methods"].get("POST", 0) / count, 3) if count else 0.0,
-            "requests_per_ip": round(count / distinct_ips, 2) if distinct_ips else count,
-            "hour":            dt.hour,
-            "injection":       w["injection"],
-            "traversal":       w["traversal"],
-            "top_ips":         w["ips"].most_common(5),
-            "top_urls":        w["urls"].most_common(5),
-            "agent":           top_agent(w["agents"]),
-        })
+        row = web_row(key, w)
+        row["agent"] = top_agent(w["agents"])
+        rows.append(row)
     return pd.DataFrame(rows).sort_values("timestamp") if rows else pd.DataFrame()
 
 

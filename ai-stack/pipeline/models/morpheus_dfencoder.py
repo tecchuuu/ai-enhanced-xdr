@@ -27,6 +27,8 @@ other two models still work — in the plain venv where Morpheus is absent.
 Contract: fit_score(X, contamination) -> (flags, scores), scores mapped so
 LOWER = more anomalous, matching IsolationForest and keeping the consumers'
 severity() and writeback code model-agnostic.
+Evaluation (train-once): fit(X) on normal windows, then score(X) = -(dfencoder
+anomaly score) on anything later.
 """
 import time
 
@@ -49,6 +51,26 @@ class MorpheusDFEncoderDetector:
         self.last_fit_sec = None
 
     def fit_score(self, X, contamination):
+        err = self.fit(X).errors(X)
+
+        # same mapping as autoencoder.py: top `contamination` by reconstruction
+        # error are the anomalies, and scores are negated z-scores so that
+        # "lower = worse" holds across every model in the registry
+        thr = np.quantile(err, 1.0 - contamination)
+        flags = np.where(err >= thr, -1, 1)
+        z = (err - err.mean()) / (err.std() + 1e-9)
+        return flags, np.round(-z, 4)
+
+    def score(self, X):
+        """Lower = more anomalous: the negated dfencoder anomaly score."""
+        return -self.errors(X)
+
+    def errors(self, X):
+        """dfencoder's per-row anomaly score under the fitted model."""
+        scores = self._model.get_anomaly_score(_frame(X))
+        return np.asarray(_to_numpy(scores), dtype="float64").ravel()
+
+    def fit(self, X):
         import torch
         from morpheus.models.dfencoder import AutoEncoder
 
@@ -57,10 +79,7 @@ class MorpheusDFEncoderDetector:
         device = "cuda" if use_cuda else "cpu"
         self.last_device = (torch.cuda.get_device_name(0) + " (cuda)") if use_cuda else "cpu"
 
-        # dfencoder infers column types from the frame, so it needs real column
-        # names and float dtypes — an unnamed ndarray is rejected downstream.
-        df = pd.DataFrame(X).astype("float64")
-        df.columns = [str(c) for c in df.columns]
+        df = _frame(X)
         n = len(df)
 
         batch = self.batch_size or max(2, min(256, n))
@@ -85,16 +104,16 @@ class MorpheusDFEncoderDetector:
         if use_cuda:
             torch.cuda.synchronize()    # async kernels: time nothing until they finish
         self.last_fit_sec = round(time.perf_counter() - t0, 3)
+        self._model = model
+        return self
 
-        err = np.asarray(_to_numpy(model.get_anomaly_score(df)), dtype="float64").ravel()
 
-        # same mapping as autoencoder.py: top `contamination` by reconstruction
-        # error are the anomalies, and scores are negated z-scores so that
-        # "lower = worse" holds across every model in the registry
-        thr = np.quantile(err, 1.0 - contamination)
-        flags = np.where(err >= thr, -1, 1)
-        z = (err - err.mean()) / (err.std() + 1e-9)
-        return flags, np.round(-z, 4)
+def _frame(X):
+    """dfencoder infers column types from the frame, so it needs real column
+    names and float dtypes — an unnamed ndarray is rejected downstream."""
+    df = pd.DataFrame(X).astype("float64")
+    df.columns = [str(c) for c in df.columns]
+    return df
 
 
 def _to_numpy(scores):

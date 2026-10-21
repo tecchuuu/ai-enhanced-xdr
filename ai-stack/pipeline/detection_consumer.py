@@ -17,7 +17,7 @@ equivalent; the separation is a scale concern, not a correctness one.
 """
 
 import os, re, signal, sys, time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -33,6 +33,9 @@ from opensearchpy import OpenSearch, helpers
 
 from consumer_common import (ai_index, decode_event, fit_evidence, heartbeat,
                              note_agent, top_agent, window_features)
+# the window/feature definition, shared with the offline evaluation
+from features import (AUTH_FEATURES as FEATURES, WINDOW_SEC, auth_row,
+                      fold_auth, new_auth_window, window_key)
 
 # ----------------------------------------------------------------- config
 # Kafka's address is configurable: on a shared VM another group's broker may own
@@ -40,15 +43,11 @@ from consumer_common import (ai_index, decode_event, fit_evidence, heartbeat,
 # to connect at all, so the address in use is printed at startup.
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC          = "wazuh-archives"
-WINDOW_SEC     = 60      # aggregate events into 1-minute windows
 SCORE_EVERY    = 60      # attempt scoring every N seconds
 MIN_WINDOWS    = int(os.environ.get("MIN_WINDOWS", "10"))  # don't score until this many windows (else meaningless); lower only for a demo
 MAX_WINDOWS    = 120     # rolling buffer size (2h at 1-min windows)
 CONTAMINATION  = 0.15
 CONSUMER_NAME  = "auth-detector"   # its status doc id in ai-pipeline-status
-
-FEATURES = ["event_count", "distinct_users", "max_level",
-            "hour", "events_per_user"]
 
 # inference-slot model, swappable via DETECTOR_MODEL in dashboard/.env
 _MODEL = get_model(os.environ.get("DETECTOR_MODEL", "isolation_forest"))
@@ -74,8 +73,7 @@ os_client = OpenSearch(
 
 # ----------------------------------------------------------------- state
 # window_key (epoch // WINDOW_SEC) -> accumulated stats
-windows = defaultdict(lambda: {"count": 0, "users": set(), "ips": Counter(),
-                               "max_level": 0, "agents": Counter()})
+windows = defaultdict(new_auth_window)
 already_flagged = set()
 consumed = 0
 written  = 0
@@ -111,39 +109,24 @@ def ingest(event):
     if "srcip" not in data or "url" in data:
         return
 
-    key = int(dt.timestamp()) // WINDOW_SEC
-    w = windows[key]
-    w["count"] += 1
-    w["max_level"] = max(w["max_level"], event.get("rule", {}).get("level", 0) or 0)
-    w["ips"][data["srcip"]] += 1
-    note_agent(w, event)
-    last_event_at = datetime.now(timezone.utc).isoformat()
-
     user = data.get("srcuser")
     if not user:
         m = USER_RE.search(event.get("full_log", "") or "")
         user = m.group(1) if m else None
-    if user:
-        w["users"].add(user)
+
+    w = windows[window_key(dt)]
+    fold_auth(w, data["srcip"], event.get("rule", {}).get("level", 0), user)
+    note_agent(w, event)
+    last_event_at = datetime.now(timezone.utc).isoformat()
 
 
 def build_frame():
     """Turn accumulated windows into a feature table."""
     rows = []
     for key, w in windows.items():
-        dt = datetime.fromtimestamp(key * WINDOW_SEC, tz=timezone.utc)
-        users = len(w["users"])
-        rows.append({
-            "key":             key,
-            "timestamp":       dt,
-            "event_count":     w["count"],
-            "distinct_users":  users,
-            "max_level":       w["max_level"],
-            "hour":            dt.hour,
-            "events_per_user": round(w["count"] / users, 2) if users else w["count"],
-            "top_ips":         w["ips"].most_common(5),
-            "agent":           top_agent(w["agents"]),
-        })
+        row = auth_row(key, w)
+        row["agent"] = top_agent(w["agents"])
+        rows.append(row)
     return pd.DataFrame(rows).sort_values("timestamp") if rows else pd.DataFrame()
 
 
