@@ -84,12 +84,17 @@ def main():
 
     by_event = {}
     for b in blocks:
-        fe = FULL.search(b)
+        fe = FULL.search(b)            # the echoed input line, from the Phase 1 part
         if not fe:
             continue
-        rid = RID.search(b)
-        lvl = LVL.search(b)
-        grp = GRP.search(b)
+        # read id/level/groups from the Phase 3 (rules) section ONLY: the web
+        # decoder puts the HTTP status in a Phase 2 field also called `id`, so
+        # searching the whole block would grab the status code, not the rule.
+        p3 = b.split("**Phase 3: Completed filtering (rules).")
+        rules = p3[1] if len(p3) > 1 else ""
+        rid = RID.search(rules)
+        lvl = LVL.search(rules)
+        grp = GRP.search(rules)
         by_event[fe.group(1)] = (int(rid.group(1)) if rid else 0,
                                  int(lvl.group(1)) if lvl else 0,
                                  grp.group(1) if grp else "")

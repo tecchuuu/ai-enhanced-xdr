@@ -147,6 +147,26 @@ def evaluate(csvs, models, seeds, percentiles, ablate, train_days, val_days):
                         score_rows.append(pd.DataFrame({
                             "scenario": meta["scenario"], "config": config, "model": name, "seed": seed,
                             "split": part, "timestamp": frame.timestamp, "label": frame.label, "score": a}))
+
+        # Wazuh signature-rule baseline: not a trained model, so it is scored on
+        # its genuine rule levels at FIXED alert thresholds (>=5 any alert, >=10
+        # correlated), not by a validation percentile. Its PR-AUC/ROC-AUC use the
+        # rule level as the ranking score, directly comparable to the models'.
+        if "rule_level" in te.columns:
+            rl = pd.to_numeric(te["rule_level"], errors="coerce").fillna(0).to_numpy(float)
+            both = len(set(y)) == 2
+            pr = average_precision_score(y, rl) if both else float("nan")
+            roc = roc_auc_score(y, rl) if both else float("nan")
+            for L in (5, 10):
+                m, per_step = at_threshold(y, rl, L - 0.5, test_days, te.timestamp, te.steps.to_numpy())
+                model = f"wazuh_rules>=L{L}"
+                for p in percentiles:                       # same at every percentile (fixed threshold)
+                    metrics.append({"scenario": meta["scenario"], "lane": lane, "config": "all",
+                                    "model": model, "seed": 0, "fit_sec": 0.0, "device": "-",
+                                    "pr_auc": pr, "roc_auc": roc, "percentile": p, "threshold": L, **m})
+                    for s, (n, c) in per_step.items():
+                        step_rows.append({"scenario": meta["scenario"], "config": "all", "model": model,
+                                          "seed": 0, "percentile": p, "step": s, "windows": n, "caught": c})
     scores = pd.concat(score_rows, ignore_index=True) if score_rows else pd.DataFrame()
     return pd.DataFrame(metrics), pd.DataFrame(step_rows), scores
 
