@@ -41,18 +41,41 @@ Direct run without Docker (no reboot-survival):
 nohup python baseline/lab_baseline.py --mode realtime --out /LuckyFive/lab/logs &
 ```
 
-## 2. Attacks — next (not built yet)
+## 2. Attacks
 
-`lab/attacker/` will run SSH brute force, password spraying, slow/low guessing,
-a distributed (many-IP) attempt, and web scans/SQLi/XSS, each written to
-`attack_schedule.csv` (start, end, attacker IP, type) — the ground truth that
-labels the attack minutes.
+`lab/attacker/lab_attack.py` appends attack log lines onto one weekday in the
+baseline (default: baseline start + 4 days) and writes `attack_schedule.csv`
+(start, end, attacker IP, lane, type) — the ground truth. Attackers come from
+10.20.9.0/24, distinct from the employees' 10.20.0.0/24. Pure stdlib.
+
+```bash
+python3 lab/attacker/lab_attack.py --logs /LuckyFive/lab/logs
+```
+
+It runs twelve attacks: web content-discovery scan, HTTP login brute force,
+SQLi, XSS, path traversal; SSH brute force (fast + a night run), password spray,
+distributed (10 IPs), and low-and-slow at 1/min, 1/3min, 1/6min (the
+detection-floor sweep). Re-run with `--reset` to redo it (keeps the baseline).
 
 ## 3. Evaluate
 
-A lab loader (next) turns `auth.log` / `access.log` + `attack_schedule.csv` into
-labelled 1-minute windows, then `scripts/evaluate.py` runs the same comparison
-as R17 (Isolation Forest vs autoencoder vs Morpheus DFP, vs a count baseline).
+`scripts/lab_windows.py` turns `auth.log` / `access.log` + `attack_schedule.csv`
+into labelled 1-minute windows (same features as the live detectors), one CSV
+per lane; `scripts/evaluate.py` then runs the R17 comparison (Isolation Forest
+vs autoencoder vs Morpheus DFP, vs a count baseline). Run both in the `morpheus`
+conda env (DFP needs it; the others run anywhere):
+
+```bash
+conda activate morpheus
+python scripts/lab_windows.py --logs /LuckyFive/lab/logs --out /LuckyFive/eval
+python scripts/evaluate.py /LuckyFive/eval/lab_*.csv --out /LuckyFive/eval/lab --train-days 3 --val-days 1
+cat /LuckyFive/eval/lab/summary.md
+```
+
+`--train-days 3 --val-days 1`: train on the first 3 normal days, set the
+threshold on day 4, test on the attack day (day 5) onward. The authoritative run
+also replays the lab logs through Wazuh for genuine rule levels and the rule
+baseline (failure_log Entry 40).
 
 Note: scripted normal traffic is smoother than real users, so lab false-alarm
 rates are optimistic — state this in the write-up (the "lab-only evaluation"

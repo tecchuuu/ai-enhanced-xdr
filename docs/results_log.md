@@ -447,6 +447,6 @@ State these explicitly — they strengthen credibility rather than weaken it:
 | Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
 | NVIDIA Morpheus model in the inference slot | **DONE 2026-10-10 (R16)** | — |
 | Three-model comparison on a large dataset | **DONE 2026-10-21 (R17)** — web lane, AIT-LDS, 3 scenarios | — |
-| SSH-lane evaluation on labelled attacks (lab) | not started | lab normal-traffic generator (3 days) + scripted attacks with a schedule |
+| SSH-lane evaluation on labelled attacks (lab) | **method ready 2026-10-21** (lab baseline + attacker + loader built and dry-run locally; failure_log Entry 39–40) — authoritative VM run with DFP pending → R18 | run `scripts/evaluate.py` in the `morpheus` env on the VM |
 | Wazuh-rule baseline on the same data | not started | replay AIT access logs (and lab logs) through Wazuh |
 | Web detection lane (second coherent slice) | **DONE 2026-09-09 (R11)** | — |
