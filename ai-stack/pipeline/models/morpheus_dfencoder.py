@@ -71,8 +71,18 @@ class MorpheusDFEncoderDetector:
         return np.asarray(_to_numpy(scores), dtype="float64").ravel()
 
     def fit(self, X):
+        import logging
+        import warnings
+
         import torch
         from morpheus.models.dfencoder import AutoEncoder
+
+        # Two notices dfencoder prints on every fit, both expected here: empty
+        # categorical-embedding layers (these features are all numeric), and
+        # "no early stopping" (disabled on purpose, patience=-1). Quiet them so a
+        # live pipeline's log shows its detections, not the same two lines per cycle.
+        logging.getLogger("morpheus.models.dfencoder").setLevel(logging.ERROR)
+        warnings.filterwarnings("ignore", message="Initializing zero-element tensors")
 
         torch.manual_seed(self.seed)
         use_cuda = torch.cuda.is_available()

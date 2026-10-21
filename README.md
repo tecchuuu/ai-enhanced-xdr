@@ -62,9 +62,11 @@ cp dashboard/.env.example dashboard/.env
 cd ../ai-stack
 docker compose -p luckyfive_kafka -f ai-stack.yml up -d --build
 ```
-Five services from `ai-stack/ai-stack.yml`: Kafka, **Filebeat** (manager
-archive → Kafka), the **auth** and **web detectors**, and the **API**, which
-also serves the console: `http://<host>:8000`. The first run builds the image
+Six services from `ai-stack/ai-stack.yml`: Kafka, **Filebeat** (manager
+archive → Kafka), the **auth** and **web detectors**, the auth lane again as an
+**NVIDIA Morpheus pipeline** on the GPU (`morpheus-auth`; needs the Morpheus
+conda env, SETUP.md §7), and the **API**, which also serves the console:
+`http://<host>:8000`. The first run builds the image
 (`Dockerfile`: console + Python, a few minutes). After pulling new code, run the
 same command — `--build` rebuilds only what changed. After editing
 `dashboard/.env`, `restart` instead. Logs: `docker compose -p luckyfive_kafka

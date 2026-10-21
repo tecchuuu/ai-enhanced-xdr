@@ -155,7 +155,7 @@ conda install -y -c nvidia morpheus-core=25.06
 export TMPDIR=/LuckyFive/tmp PIP_CACHE_DIR=/LuckyFive/pip-cache   # or pip fills /tmp
 MORPHEUS_CORE_PKG_DIR=$(dirname $(python -c "import morpheus; print(morpheus.__file__)"))
 pip install -r ${MORPHEUS_CORE_PKG_DIR}/requirements_morpheus_core_arch-$(arch).txt
-pip install pandas scikit-learn kafka-python opensearch-py python-dotenv requests
+pip install pandas scikit-learn kafka-python-ng==2.2.3 opensearch-py==3.2.0 python-dotenv requests
 ```
 Verify: `python -c "from morpheus.models.dfencoder import AutoEncoder; print('OK')"` and `python -c "import torch; print(torch.cuda.is_available())"`.
 
@@ -163,7 +163,19 @@ Run the three-model comparison (needs this env; the other two models run anywher
 ```
 python scripts/compare_models.py --models isolation_forest,autoencoder,morpheus_dfencoder
 ```
-To run the live consumer on Morpheus: stop the container first (`(cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml stop auth-detector)` — both use the same Kafka consumer group, so Kafka would split the events between them), then `conda activate morpheus` and `DETECTOR_MODEL=morpheus_dfencoder python detection_consumer.py`. Takes ~25 min of installs end to end; the conda solve is the slow part.
+The installs take ~25 min end to end; the conda solve is the slow part.
+
+## 7b. The auth lane as a Morpheus pipeline (service `morpheus-auth`)
+`ai-stack/morpheus/auth_pipeline.py` runs the SSH lane as an NVIDIA Morpheus pipeline — Kafka source → 1-minute windows → dfencoder on the GPU → OpenSearch — next to `auth-detector`, which stays as the CPU baseline. It has its own Kafka consumer group, so both see every event; its detections carry `ai.pipeline: "morpheus"`, and the console's Pipeline page lists it as `morpheus-auth`.
+
+1. **Check the env** (no Kafka or OpenSearch needed) — want `ALL PASS`:
+
+       conda activate morpheus && python ai-stack/morpheus/probe.py --cpu
+
+2. **Run it** — it is a service in `ai-stack.yml`, so §5's `up -d --build` starts it with the rest. The container runs the conda env above, mounted read-only (`MORPHEUS_CONDA` in `ai-stack/.env`, default `/LuckyFive/miniforge3`), and gets the GPU through the NVIDIA container runtime (§1). Logs: `docker logs -f luckyfive_kafka-morpheus-auth-1`.
+
+- **`--cpu`** is Morpheus's CPU mode for the dataframe stages (pandas). GPU mode (cuDF) crashes inside Morpheus's worker threads on this VM — driver 580 (CUDA 13) with the env's RAPIDS 25.02 (failure log Entry 41). dfencoder runs on the H100 either way; at a few hundred windows the dataframe work is trivial.
+- **By hand instead** (foreground, for debugging): `python ai-stack/morpheus/auth_pipeline.py --cpu` in the env — stop the service first, or two Morpheus pipelines share one consumer group and Kafka splits the events between them.
 
 ## 8. When done
 - `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.

@@ -477,6 +477,31 @@ Neither layer alone is sufficient; together — signatures for crafted single re
 
 ---
 
+## R19 — The auth lane runs live on the NVIDIA Morpheus pipeline runtime
+
+**Measured:** whether the SSH lane can run on Morpheus's own pipeline runtime — not only Morpheus's model in the project's Python consumer (R16) — live, on the production data path, writing the same detections.
+
+**Setup:** `ai-stack/morpheus/auth_pipeline.py`, a Morpheus 25.06 `LinearPipeline`: Kafka source → 1-minute windows → Morpheus dfencoder on the H100 → OpenSearch sink. Same event reading, features and detection document as the Python consumer (shared modules), its own Kafka consumer group, run beside the Python consumer (the CPU baseline). Traffic: `scripts/demo_attack.sh` on the SIAM VM — baseline SSH attempts, a brute-force spike at 14:29 and a 20-user password spray at 14:32 (UTC+7).
+
+**Result:**
+
+| Demo phase (local) | Morpheus pipeline detection (UTC) |
+|---|---|
+| Brute-force spike, 14:29 | 07:29 — 40 events, 1 user ✅ |
+| Password spray, 14:32 | 07:32 — 19 events, 19 users ✅ |
+| Baseline minute, 14:33 | 07:33 — 1 event (extra flag) |
+
+Both attack phases were detected on the first scoring cycles after the 10-window warm-up. Before going live, an offline check confirmed the pipeline's code writes documents identical to the Python consumer's on the same events (failure log Entry 41).
+
+**Honest notes:**
+- **Dataframe stages run in Morpheus CPU mode.** GPU mode (cuDF) crashed inside Morpheus's worker threads on this VM's CUDA 13 driver (Entry 41); the model runs on the GPU either way. At this volume the dataframe work is negligible, so no detection or latency result depends on it.
+- **Live mode = rolling refit**, as the Python consumer: it flags ~15% of buffered windows, hence the extra 07:33 flag. Detection quality is measured train-once in R17/R18, not here; R19 shows the runtime works on the live path.
+- One demo run, two attack phases — a deployment demonstration, not an evaluation.
+
+**How to state it:** "The authentication lane was deployed on NVIDIA Morpheus's pipeline runtime — Kafka ingestion, windowing, Digital Fingerprinting autoencoder inference on the H100, and OpenSearch output as Morpheus stages — alongside the original Python consumer, which remains as a CPU baseline. Fed live SSH traffic, it detected both scripted attack phases within the first scoring cycles, writing detections identical in form to the Python consumer's."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:

@@ -1,8 +1,8 @@
 # AI/streaming layer — deliberately separate from Wazuh's compose file so the
 # Wazuh base stack stays pristine and independently restartable. Everything
 # after Wazuh runs here as a service: Kafka, Filebeat (Wazuh -> Kafka), the two
-# detectors and the API + console. `up -d --build` starts it all; there are no
-# processes to launch by hand.
+# detectors, the auth lane's Morpheus pipeline (GPU) and the API + console.
+# `up -d --build` starts it all; there are no processes to launch by hand.
 
 # Shared by api / auth-detector / web-detector: one image (../Dockerfile), run
 # three ways. Host networking, like Filebeat: Kafka advertises localhost, and
@@ -115,6 +115,45 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # The auth lane again, as an NVIDIA Morpheus pipeline (morpheus/auth_pipeline.py):
+  # Kafka -> windows -> dfencoder on the GPU -> ai-detections-* tagged
+  # "pipeline": "morpheus". Its own consumer group, so auth-detector (the CPU
+  # baseline) keeps receiving every event. Runs the VM's Morpheus conda env,
+  # mounted read-only at its own path (see morpheus/Dockerfile). --cpu = Morpheus
+  # CPU mode for the dataframe stages (pandas): cuDF crashes inside Morpheus's
+  # worker threads on this driver (failure log Entry 41); dfencoder still uses the GPU.
+  morpheus-auth:
+    <<: *ai-xdr
+    build:
+      context: ..
+      dockerfile: ai-stack/morpheus/Dockerfile
+    image: luckyfive/morpheus-auth
+    init: true                           # PID 1 that forwards docker stop to Python
+    working_dir: /app/ai-stack/morpheus
+    command: ["${MORPHEUS_CONDA:-/LuckyFive/miniforge3}/envs/morpheus/bin/python", "auth_pipeline.py", "--cpu"]
+    volumes:
+      - type: bind
+        source: ../dashboard/.env
+        target: /app/dashboard/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MORPHEUS_CONDA:-/LuckyFive/miniforge3}
+        target: ${MORPHEUS_CONDA:-/LuckyFive/miniforge3}
+        read_only: true
+        bind:
+          create_host_path: false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      - kafka
 
 volumes:
   kafka_data:
