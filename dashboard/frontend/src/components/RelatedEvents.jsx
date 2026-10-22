@@ -17,9 +17,9 @@ function summary(d, isAi) {
   const who = d.basis === "srcip" ? `from ${d.ips.join(", ")}` : `on agent ${d.agent} (the alert carries no source IP)`;
   const shown = d.count > d.events.length ? ` Showing the first ${d.events.length}.` : "";
   return (
-    `${d.count} rule alert${d.count === 1 ? "" : "s"} at any level ${who}, ` +
+    `${d.count} Wazuh alert${d.count === 1 ? "" : "s"} at any level ${who}, ` +
     `${fmtTime(d.start)} – ${fmtTime(d.end)}` +
-    (isAi ? " — the decoded events behind this window." : ".") +
+    (isAi ? " — the log events behind this minute." : ".") +
     shown
   );
 }

@@ -29,7 +29,8 @@ function BlockStatus({ blocked }) {
       <EuiBadge color={blocked.unblock_unconfirmed ? "warning" : "danger"}>
         {blocked.unblock_unconfirmed ? "unblock unconfirmed" : "blocked"}
       </EuiBadge>{" "}
-      since {fmtTime(blocked.since)} on agent {blocked.agent_id} — managed under Response log
+      since {fmtTime(blocked.since)} on {blocked.agent_name ?? `agent ${blocked.agent_id}`} — managed
+      under Response log
     </>
   );
 }
@@ -62,7 +63,7 @@ export default function IpFlyout({ ip, onClose, refreshKey }) {
   }, [load, refreshKey]);
 
   const stats = data && [
-    { title: data.rule_count, description: "Rule alerts (any level)" },
+    { title: data.rule_count, description: "Wazuh alerts (any level)" },
     { title: data.ai_count, description: "AI detections" },
     { title: fmtTime(data.first_seen), description: "First seen" },
     { title: fmtTime(data.last_seen), description: "Last seen" },

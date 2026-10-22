@@ -14,7 +14,7 @@ import {
 } from "@elastic/eui";
 import { getBlockedIps, unblockIp } from "../api";
 import { usePolling } from "../lib/usePolling";
-import { fmtTime } from "../lib/format";
+import { fmtTime, refText } from "../lib/format";
 import { useNav } from "../lib/nav";
 import PanelTitle from "./PanelTitle";
 
@@ -43,7 +43,7 @@ export default function BlockedIps() {
       const res = await unblockIp({ agentId: target.agent_id, srcip: target.srcip });
       if (res.confirmed === false) {
         setNotice(
-          `Wazuh did not confirm the unblock of ${target.srcip} on agent ${target.agent_id}. ` +
+          `Wazuh did not confirm the unblock of ${target.srcip} on ${target.agent_name ?? `agent ${target.agent_id}`}. ` +
             "The drop may still be in place, so it stays listed — remove it on the agent " +
             "(iptables -D) or retry. Details are in the response log."
         );
@@ -64,9 +64,14 @@ export default function BlockedIps() {
       width: "140px",
       render: (ip) => <EuiLink onClick={() => openIp(ip)}>{ip}</EuiLink>,
     },
-    { field: "agent_id", name: "Agent", width: "90px" },
-    { field: "since", name: "Blocked since", render: fmtTime, width: "180px" },
-    { field: "alert_ref", name: "Triggered by", truncateText: true },
+    {
+      field: "agent_name",
+      name: "Agent",
+      width: "110px",
+      render: (name, row) => name ?? row.agent_id ?? "—",
+    },
+    { field: "since", name: "Blocked since", render: fmtTime, width: "150px" },
+    { field: "alert_ref", name: "Triggered by", truncateText: true, render: refText },
     {
       name: "State",
       width: "170px",
@@ -94,7 +99,7 @@ export default function BlockedIps() {
     <EuiPanel hasBorder>
       <PanelTitle
         title="Currently blocked"
-        info="Active firewall-drop blocks, derived from the response audit log. Unblock is best-effort — Wazuh has no first-class API undo. If Wazuh does not accept an unblock, the IP stays listed as 'unblock unconfirmed'."
+        info="IPs currently blocked by Wazuh's firewall-drop response, worked out from the response log. Unblocking is best-effort — Wazuh has no proper undo. If Wazuh does not confirm an unblock, the IP stays listed as 'unblock unconfirmed'."
       />
       <EuiSpacer size="s" />
       {notice && (
@@ -135,8 +140,8 @@ export default function BlockedIps() {
         >
           <EuiText size="s">
             <p>
-              Removes the firewall drop for <strong>{target.srcip}</strong> on agent{" "}
-              {target.agent_id} and records the action in the response log.
+              Removes the firewall block on <strong>{target.srcip}</strong> on{" "}
+              {target.agent_name ?? `agent ${target.agent_id}`} and records it in the response log.
             </p>
           </EuiText>
           {error && (

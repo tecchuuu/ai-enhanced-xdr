@@ -67,31 +67,35 @@ def _score_line(score, threshold=None):
     it gets it backwards (observed with gemma3:12b, R15). Computing the verdict
     here costs nothing and removes the only grounding error seen in testing.
     `threshold` is the cutoff recorded by the fit that flagged the window.
+
+    Both are given flipped (higher = more unusual), the way the console shows
+    them, so the assistant's numbers match the screen the analyst is reading.
     """
     if score is None:
         return "Anomaly score: unavailable"
     cutoff = FLAG_THRESHOLD if threshold is None else threshold
     margin = cutoff - score                  # positive = past the threshold
-    verdict = (f"{margin:.2f} PAST the flag threshold of {cutoff} — a strong detection"
+    shown, shown_cutoff = -score, -cutoff
+    verdict = (f"{margin:.2f} ABOVE the flag cutoff of {shown_cutoff:.2f} — a clear detection"
                if margin > 0.1 else
-               f"only {abs(margin):.2f} from the flag threshold of {cutoff} — borderline")
-    return (f"Anomaly score: {score} (scale: more negative = more anomalous). "
+               f"only {abs(margin):.2f} from the flag cutoff of {shown_cutoff:.2f} — borderline")
+    return (f"Anomaly score: {shown:.2f} (higher = more unusual). "
             f"This score is {verdict}.")
 
 
 def _baseline_lines(ai):
-    """This window next to what the un-flagged windows looked like in the same
+    """This minute next to what the un-flagged minutes looked like in the same
     fit — the 'why' behind the score, so the model needn't guess what normal is."""
     feats, base = ai.get("features") or {}, ai.get("baseline") or {}
     lines = []
     for name, value in feats.items():
         b = base.get(name)
         if b and name != "hour":
-            lines.append(f"  {name}: {value} (normal median {b['median']}, p95 {b['p95']})")
+            lines.append(f"  {name}: {value} (typical {b['median']}, usually below {b['p95']})")
     if not lines:
         return []
     n = ai.get("windows_scored")
-    return [f"This window vs the normal windows{f' (of {n} scored)' if n else ''}:", *lines]
+    return [f"This minute vs the normal minutes{f' (of {n} scored)' if n else ''}:", *lines]
 
 
 def _summarise(doc):
@@ -103,13 +107,13 @@ def _summarise(doc):
         f"Heuristic category: {ai.get('category', 'unclassified')}"
         + (f" (MITRE {ai['mitre']})" if ai.get("mitre") else ""),
         _score_line(ai.get("anomaly_score"), ai.get("threshold")),
-        f"Aggregation window: {ai.get('window', '60s')}",
+        f"Time span: one minute ({ai.get('window', '60s')})",
         f"Time: {doc.get('timestamp')}",
     ]
 
     if ai.get("pipeline") == "web-streaming":
         lines += [
-            f"Requests in window: {ai.get('request_count')}",
+            f"Requests in this minute: {ai.get('request_count')}",
             f"Distinct URLs: {ai.get('distinct_urls')}",
             f"Error ratio: {ai.get('error_ratio')}",
             f"404 count: {ai.get('not_found_count')}",
@@ -120,7 +124,7 @@ def _summarise(doc):
                          + ", ".join(f"{u['url']} ({u['count']})" for u in ai["top_urls"]))
     else:
         lines += [
-            f"Events in window: {ai.get('event_count')}",
+            f"Events in this minute: {ai.get('event_count')}",
             f"Distinct users: {ai.get('distinct_users')}",
             f"Events per user: {ai.get('events_per_user')}",
         ]
@@ -135,22 +139,22 @@ def _summarise(doc):
 # ----------------------------------------------------------------- providers
 _MOCK_TEMPLATES = {
     "brute_force":
-        "The model flagged a {window} window with {events_per_user} events per user "
+        "The model flagged a minute with {events_per_user} events per user "
         "across only {distinct_users} account(s) — far above the learned baseline and "
         "consistent with a brute-force attempt{ip_clause}. Check whether that source is "
         "a known host and review the targeted account(s) for lockout or a successful login.",
     "password_spraying":
-        "This window shows {distinct_users} distinct users each seeing only a few "
+        "This minute shows {distinct_users} distinct users each seeing only a few "
         "attempts — a spraying pattern that stays under per-account rate thresholds. "
         "Confirm the source{ip_clause} is expected and check every sprayed account for a "
         "successful authentication.",
     "web_injection":
-        "Requests in this {window} window carried SQL or script-injection markers in the "
+        "Requests in this minute carried SQL or script-injection markers in the "
         "URL, and the model saw an abnormal error ratio of {error_ratio}. Review the "
         "targeted endpoint's input handling and check whether any malicious request "
         "returned a 200.",
     "path_traversal":
-        "URLs in this window contained directory-traversal sequences (../ or encoded "
+        "URLs in this minute contained directory-traversal sequences (../ or encoded "
         "equivalents). Confirm the web server did not serve any file outside its root and "
         "identify the source{ip_clause}.",
     "content_discovery":
@@ -158,7 +162,7 @@ _MOCK_TEMPLATES = {
         "automated content discovery or directory brute force. Identify the scanning "
         "source{ip_clause} and confirm nothing sensitive returned a 200.",
     "web_brute_force":
-        "The window is dominated by POST requests ({post_ratio} of traffic) to very few "
+        "This minute is dominated by POST requests ({post_ratio} of traffic) to very few "
         "endpoints — a login brute-force shape. Check the target form's accounts for "
         "lockouts or a successful login and confirm the source{ip_clause}.",
     "vulnerability_scan":
@@ -166,15 +170,15 @@ _MOCK_TEMPLATES = {
         "an automated vulnerability scan. Identify the source{ip_clause}; the scan itself "
         "is noise, but note anything that returned a 200.",
     "suspicious_timing":
-        "Activity in this window falls outside normal working hours and deviates from the "
+        "Activity in this minute falls outside normal working hours and deviates from the "
         "baseline the model learned for this environment. Verify whether the account and "
         "source{ip_clause} have a legitimate reason to be active now.",
 }
 
 _MOCK_GENERIC = (
-    "The anomaly model scored this {window} window at {score}, past the flag threshold — "
-    "the aggregate behaviour deviates from the learned baseline without matching a known "
-    "signature. Review the source{ip_clause} and the events in the window to decide "
+    "The anomaly model scored this minute at {score} (higher = more unusual), past its "
+    "flag cutoff — the activity deviates from the learned baseline without matching a "
+    "Wazuh rule. Review the source{ip_clause} and the events in this minute to decide "
     "whether this is benign drift or the start of an incident."
 )
 
@@ -184,8 +188,9 @@ def _mock(doc):
     top = ai.get("top_srcips") or []
     ip_clause = f" ({top[0]['ip']})" if top else ""
     fields = {
-        "window":          ai.get("window", "60s"),
-        "score":           ai.get("anomaly_score"),
+        # shown flipped, as in the console: higher = more unusual
+        "score":           (f"{-ai['anomaly_score']:.2f}"
+                            if isinstance(ai.get("anomaly_score"), (int, float)) else "n/a"),
         "events_per_user": ai.get("events_per_user"),
         "distinct_users":  ai.get("distinct_users"),
         "distinct_urls":   ai.get("distinct_urls"),
@@ -209,15 +214,15 @@ _CHAT_HINTS = [
      "Escalate if there's any sign the attempt succeeded."),
     (("false positive", "benign", "legit", "real?", "is this real"),
      "The model has no labels — it flags deviation from the learned baseline, "
-     "and the contamination setting means it always flags a small fraction of "
-     "windows. Judge it against the numbers: a strongly negative score plus a "
-     "matching category pattern is more likely genuine; a borderline score on a "
-     "sparse window is often the contamination parameter, not an attack."),
+     "and it always flags a small share of the most unusual minutes. Judge it "
+     "against the numbers: a score clearly above the cutoff plus a matching "
+     "attack-type pattern is more likely genuine; a borderline score on a quiet "
+     "minute is often just that fixed share, not an attack."),
     (("history", "before", "yesterday", "seen this", "same ip", "other alert",
       "related", "previous"),
      "I only have this one detection — I can't see history, other alerts, or "
-     "what this source did outside the window. Pivot in Security events / "
-     "OpenSearch on the source IP over a wider range to answer that."),
+     "what this source did outside this minute. Click the source IP (or search "
+     "it under Wazuh alerts) over a wider time range to answer that."),
     (("block", "firewall", "ban"),
      "Use the Block action on the alert — it sends Wazuh's firewall-drop active "
      "response to the agent. Check first that the IP isn't a shared egress "

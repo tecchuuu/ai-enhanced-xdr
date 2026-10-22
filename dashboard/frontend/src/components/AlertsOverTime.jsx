@@ -25,7 +25,7 @@ export default function AlertsOverTime({ buckets, interval, from, to }) {
     <EuiPanel hasBorder>
       <PanelTitle
         title="Alerts over time"
-        info={`Rule alerts (level 10+) and AI detections, stacked per ${interval ?? "interval"}. An interval with AI detections and no rule alerts is one the model flagged while the ruleset stayed silent.`}
+        info={`Wazuh alerts (level 10+) and AI detections, stacked per ${interval ?? "interval"}. A bar that is only AI is a stretch where the AI flagged activity and no Wazuh rule fired.`}
       />
       <EuiSpacer size="s" />
       <div style={{ height: 260 }}>
@@ -39,7 +39,7 @@ export default function AlertsOverTime({ buckets, interval, from, to }) {
             />
             <BarSeries
               id="rule"
-              name="Rule alerts"
+              name="Wazuh alerts"
               xScaleType={ScaleType.Time}
               yScaleType={ScaleType.Linear}
               xAccessor="time"
@@ -64,7 +64,12 @@ export default function AlertsOverTime({ buckets, interval, from, to }) {
               position={Position.Bottom}
               tickFormat={niceTimeFormatter(domain)}
             />
-            <Axis id="y" position={Position.Left} ticks={4} integersOnly />
+            <Axis
+              id="y"
+              position={Position.Left}
+              ticks={4}
+              tickFormat={(v) => (Number.isInteger(v) ? String(v) : "")}
+            />
           </Chart>
         ) : (
           <EuiEmptyPrompt
@@ -73,8 +78,8 @@ export default function AlertsOverTime({ buckets, interval, from, to }) {
             title={<h3>No alerts in this range</h3>}
             body={
               <p>
-                Nothing at level 10+ and no AI detections in the selected range.
-                Generate some traffic, or widen the time range.
+                No Wazuh alerts at level 10+ and no AI detections in the selected range.
+                Widen the time range, or generate some traffic.
               </p>
             }
           />

@@ -2,6 +2,7 @@ import hmac
 import ipaddress
 import os
 import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -581,6 +582,23 @@ def agents():
         raise HTTPException(status_code=502, detail=f"Wazuh API unreachable: {e}")
 
 
+_AGENT_NAMES = {"at": float("-inf"), "names": {}}
+
+
+def _agent_names():
+    """Agent id -> name, so the response views say "ubuntu-vm" rather than
+    "001". Cached for a minute: those views are polled far more often than
+    agents change, and every alert list reads the blocked set."""
+    now = time.monotonic()
+    if now - _AGENT_NAMES["at"] > 60:
+        try:
+            _AGENT_NAMES["names"] = {a.get("id"): a.get("name") for a in wazuh_api.get_agents()}
+        except Exception:
+            pass              # Wazuh down: keep the last names; the ids still show
+        _AGENT_NAMES["at"] = now
+    return _AGENT_NAMES["names"]
+
+
 class BlockRequest(BaseModel):
     agent_id: str
     srcip: str
@@ -688,9 +706,11 @@ def response_log(limit: int = 100):
         })
     except Exception:
         return {"count": 0, "actions": []}
+    names = _agent_names()
     return {
         "count": res["hits"]["total"]["value"],
-        "actions": [h["_source"] for h in res["hits"]["hits"]],
+        "actions": [{**h["_source"], "agent_name": names.get(h["_source"].get("agent_id"))}
+                    for h in res["hits"]["hits"]],
     }
 
 
@@ -724,8 +744,10 @@ def blocked_ips():
                 del state[key]
             elif status == "unconfirmed":
                 state[key]["unblock_unconfirmed"] = True
+    names = _agent_names() if state else {}
     return {"blocked": [
-        {"agent_id": v.get("agent_id"), "srcip": v.get("srcip"),
+        {"agent_id": v.get("agent_id"), "agent_name": names.get(v.get("agent_id")),
+         "srcip": v.get("srcip"),
          "since": v.get("timestamp"), "alert_ref": v.get("alert_ref"),
          "reason": v.get("reason"), "unblock_unconfirmed": v["unblock_unconfirmed"]}
         for v in state.values()
@@ -864,6 +886,7 @@ def metrics(start: str | None = None, end: str | None = None,
     ai_total = _count(AI_INDEX, scope)
 
     def _minutes(index, filters):
+        """minute -> number of documents in it, for the minutes that have any"""
         try:
             res = client.search(index=index, body={
                 "size": 0,
@@ -872,12 +895,17 @@ def metrics(start: str | None = None, end: str | None = None,
                     "field": "timestamp", "fixed_interval": "1m", "min_doc_count": 1,
                 }}},
             })
-            return {b["key"] for b in res["aggregations"]["m"]["buckets"]}
+            return {b["key"]: b["doc_count"] for b in res["aggregations"]["m"]["buckets"]}
         except Exception:
-            return set()
+            return {}
 
     rule_min = _minutes(RULE_INDEX, [*scope, attack])
     ai_min = _minutes(AI_INDEX, scope)
+    # AI detections counted (not minutes) by whether a level 10+ rule alert fell
+    # in the same minute: "flagged by both" vs "flagged only by AI". That's
+    # disagreement between the two, not ground truth — the AI can be the one
+    # that's wrong; accuracy comes from the evaluation, where attacks are known.
+    ai_only_detections = sum(n for m, n in ai_min.items() if m not in rule_min)
 
     try:
         tres = client.search(index=TRIAGE_INDEX, body={"size": 2000})
@@ -894,7 +922,13 @@ def metrics(start: str | None = None, end: str | None = None,
                 and (not agent or t.get("alert_agent") == agent))
 
     tdocs = [t for t in tdocs if _in_scope(t)]
-    fp = sum(1 for t in tdocs if t.get("false_positive") and t.get("alert_source") == "ai")
+    # The FP rate is over the AI detections an analyst has given a verdict
+    # (resolved = real, false_positive = wrong), not over every detection: an
+    # unreviewed detection isn't known to be right, so counting it as such
+    # made the rate read 0% before anyone had looked at a single one.
+    ai_reviewed = [t for t in tdocs if t.get("alert_source") == "ai"
+                   and t.get("status") in ("resolved", "false_positive")]
+    fp = sum(1 for t in ai_reviewed if t.get("false_positive") or t.get("status") == "false_positive")
 
     resolve_secs = []
     for t in tdocs:
@@ -921,13 +955,17 @@ def metrics(start: str | None = None, end: str | None = None,
         "rule_alerts": rule_total,
         "rule_alerts_all_levels": rule_all,
         "ai_detections": ai_total,
+        "ai_only_detections": ai_only_detections,
+        "ai_with_rule_detections": sum(ai_min.values()) - ai_only_detections,
         "overlap_minutes": {
-            "both": len(rule_min & ai_min),
-            "ai_only": len(ai_min - rule_min),
-            "rule_only": len(rule_min - ai_min),
+            "both": len(rule_min.keys() & ai_min.keys()),
+            "ai_only": len(ai_min.keys() - rule_min.keys()),
+            "rule_only": len(rule_min.keys() - ai_min.keys()),
         },
+        "ai_reviewed": len(ai_reviewed),
         "false_positives": fp,
-        "false_positive_rate": round(fp / ai_total, 3) if ai_total else 0.0,
+        # None until something has been reviewed: "no data", not "0%"
+        "false_positive_rate": round(fp / len(ai_reviewed), 3) if ai_reviewed else None,
         "mttr_seconds": round(sum(resolve_secs) / len(resolve_secs))
                         if resolve_secs else None,
         "triaged": len(tdocs),

@@ -1,31 +1,31 @@
 // Series and status colors.
 //
+// Two separate jobs, kept on separate hues so they never collide:
+//   - severity uses the convention every SOC tool shares: critical red, high
+//     orange, medium yellow, low slate. Analysts read it without a legend.
+//   - source (Wazuh rule vs AI model) uses blue and purple, which are off that
+//     ramp, so a Wazuh row is never mistaken for a "high" one.
+//
 // Each mode is stepped for its OWN surface — dark is not an automatic flip of
-// light. Both sets were run through the dataviz six-checks (lightness band,
-// chroma floor, CVD separation, normal-vision floor, contrast vs surface)
-// against the EUI Borealis surfaces below, and pass.
-//
-//   dark  surface #0B1628 (navy) — rule/ai worst adjacent CVD dE 12.3, all >= 3:1
-//   light surface #FFFFFF        — rule/ai worst adjacent CVD dE  9.2
-//
-// The light `ai` step sits at 2.82:1 contrast, just under the 3:1 floor. That
-// is legal here because identity is never carried by color alone in this UI:
-// source badges are labelled "rule"/"AI model", charts show a legend, and every
-// view has a table. Darkening it to clear 3:1 costs more CVD separation than it
-// buys (measured: dE 9.2 -> 6.2), so it stays.
+// light. Identity is never carried by color alone: severity and source badges
+// are labelled, charts show a legend, and every view has a table.
 export const PALETTES = {
   dark: {
     surface: "#0B1628",
-    rule: "#d95926",
-    ai: "#0ca58c",
-    high: "#e66767",
-    single: "#3987e5", // single-measure bars: one hue, magnitude by length
+    rule: "#4c8df6",
+    ai: "#a371f7",
+    critical: "#e5484d",
+    high: "#f0883e",
+    medium: "#e3b341",
+    low: "#8b98ad",
   },
   light: {
     surface: "#FFFFFF",
-    rule: "#eb6834",
-    ai: "#1baf7a",
-    high: "#e34948",
-    single: "#2a78d6",
+    rule: "#1f6fe5",
+    ai: "#8250df",
+    critical: "#d92d20",
+    high: "#e06c00",
+    medium: "#c99a06",
+    low: "#6b7a90",
   },
 };

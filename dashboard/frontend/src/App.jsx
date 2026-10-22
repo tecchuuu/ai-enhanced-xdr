@@ -18,7 +18,7 @@ import {
   EuiFlyoutBody,
   EuiCallOut,
 } from "@elastic/eui";
-import { getHealth, getAgents, getAlert } from "./api";
+import { getHealth, getAgents, getAlert, getPipelineStatus } from "./api";
 import { usePolling } from "./lib/usePolling";
 import { useHashRoute } from "./lib/route";
 import { NavContext } from "./lib/nav";
@@ -28,92 +28,113 @@ import IpFlyout from "./components/IpFlyout";
 import AlertFlyout from "./components/AlertFlyout";
 import SessionModal from "./components/SessionModal";
 import Overview from "./pages/Overview";
-import SecurityEvents from "./pages/SecurityEvents";
+import WazuhAlerts from "./pages/WazuhAlerts";
 import AiDetections from "./pages/AiDetections";
-import Metrics from "./pages/Metrics";
+import RulesVsAi from "./pages/RulesVsAi";
 import ResponseLog from "./pages/ResponseLog";
 import Agents from "./pages/Agents";
-import DetectionSplit from "./pages/DetectionSplit";
 import Pipeline from "./pages/Pipeline";
 
 const REFRESH_MS = 15000;
+const DAY = 86400;
 
 // Every page carries a one-line description — a bare title reads as unfinished.
 // scoped pages read the header's time range + agent and show those controls.
+// Words are the analyst's, not the code's: an "alert" is what a rule raised
+// (an event is any log line), and the AI flags "minutes", not "windows".
 const PAGES = {
   overview: {
     title: "Overview",
     icon: "dashboardApp",
-    description: "Signature rules and the anomaly model, side by side.",
+    description: "Wazuh's rule alerts and the AI's detections, side by side.",
     component: Overview,
     scoped: true,
   },
   events: {
-    title: "Security events",
+    title: "Wazuh alerts",
     icon: "warning",
-    description: "Alerts raised by the Wazuh ruleset, with severity and triage state.",
-    component: SecurityEvents,
+    description: "Alerts raised by Wazuh's detection rules, with severity and review status.",
+    component: WazuhAlerts,
     scoped: true,
   },
   ai: {
     title: "AI detections",
     icon: "securitySignalDetected",
     description:
-      "Windows the anomaly model scored as deviating from baseline, with their anomaly score.",
+      "Minutes of activity the AI models flagged as unusual compared with normal activity.",
     component: AiDetections,
     scoped: true,
   },
   split: {
-    title: "Detection split",
+    title: "Rules vs AI",
     icon: "timeline",
     description:
-      "Rule alerts and AI detections on one timeline, minute by minute — the minutes the ruleset stayed silent stand out.",
-    component: DetectionSplit,
-    scoped: true,
-  },
-  metrics: {
-    title: "Metrics",
-    icon: "reportingApp",
-    description:
-      "Live rule-vs-AI comparison: overlap, false-positive rate, and mean time to resolve.",
-    component: Metrics,
+      "What the Wazuh rules raised next to what the AI flagged, minute by minute, with the review results.",
+    component: RulesVsAi,
     scoped: true,
   },
   responses: {
     title: "Response log",
     icon: "securitySignalResolved",
-    description: "Audit trail of every response action taken from this console.",
+    description: "Blocked IPs, and every block or unblock taken from this console.",
     component: ResponseLog,
   },
   agents: {
     title: "Agents",
     icon: "monitoringApp",
-    description: "Wazuh agents reporting to the manager, and their connection state.",
+    description: "The Wazuh agents sending logs to the manager, and whether they are connected.",
     component: Agents,
   },
   pipeline: {
     title: "Pipeline",
     icon: "pipelineApp",
     description:
-      "Whether each part of the detection pipeline is alive: OpenSearch, the Wazuh API, every detector, and the explainer.",
+      "Whether each part of the system is working: the alert store, the Wazuh manager, every detector, and the AI assistant.",
     component: Pipeline,
   },
 };
+// old links: the Metrics page was merged into Rules vs AI
+const PAGE_ALIASES = { metrics: "split" };
 
 // grouped so the nav reads as three jobs rather than a flat list of links
 const NAV_GROUPS = [
   { id: "grp-detections", name: "Detections", pages: ["overview", "events", "ai"] },
-  { id: "grp-analysis", name: "Analysis", pages: ["split", "metrics", "responses"] },
+  { id: "grp-analysis", name: "Analysis", pages: ["split", "responses"] },
   { id: "grp-system", name: "System", pages: ["pipeline", "agents"] },
 ];
 
 const DEFAULT_RANGE = { start: "now-24h", end: "now" };
 
+// The detectors' state, once, in the header — instead of a warning banner on
+// every page. A detector silent for over a day is treated as deliberately
+// stopped (a standby, or a lane not in use) and left to the Pipeline page.
+function detectorSummary(consumers) {
+  if (consumers == null) return null;
+  const silent = consumers.filter((c) => c.stale && c.age_seconds != null && c.age_seconds < DAY);
+  const warming = consumers.filter((c) => !c.stale && c.state === "warming_up");
+  const names = (cs) => cs.map((c) => c.consumer).join(", ");
+  if (!consumers.length) return { color: "subdued", text: "no detectors reporting", tip: "No detector has checked in yet." };
+  if (silent.length)
+    return {
+      color: "warning",
+      text: `${silent.length} detector${silent.length > 1 ? "s" : ""} not reporting`,
+      tip: `${names(silent)} stopped checking in — AI detections from ${silent.length > 1 ? "them" : "it"} may be missing.`,
+    };
+  if (warming.length)
+    return {
+      color: "primary",
+      text: "detectors warming up",
+      tip: `${names(warming)} collecting their first minutes of activity before flagging.`,
+    };
+  return { color: "success", text: "detectors running", tip: "Every detector checked in recently." };
+}
+
 export default function App() {
   const { colorMode, toggle } = useTheme();
   // page, time range, agent, open IP pivot, open alert: all in the URL
   const [route, navigate] = useHashRoute();
-  const page = PAGES[route.page] ? route.page : "overview";
+  const routed = PAGE_ALIASES[route.page] ?? route.page;
+  const page = PAGES[routed] ? routed : "overview";
   // the scope every scoped page reads: date-math strings straight from the
   // picker (resolved per fetch, see lib/scope.js) and an agent name ("" = all)
   const range = { start: route.start ?? DEFAULT_RANGE.start, end: route.end ?? DEFAULT_RANGE.end };
@@ -127,7 +148,18 @@ export default function App() {
   const [analyst, setAnalyst] = useState(() => loadSession().analyst ?? "");
   const [sessionPrompt, setSessionPrompt] = useState(null); // null | { rejected }
   const [alertState, setAlertState] = useState(null); // { id, alert?, error? }
+  const [consumers, setConsumers] = useState(null);
   const refreshAll = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  usePolling(async (isCurrent) => {
+    try {
+      const s = await getPipelineStatus();
+      if (isCurrent()) setConsumers(s.consumers);
+    } catch {
+      /* the connection indicator already reports an unreachable API */
+    }
+  }, 30000);
+  const detectors = detectorSummary(consumers);
 
   // each page loads and polls its own data; the header only tracks the API
   usePolling(async (isCurrent) => {
@@ -259,6 +291,19 @@ export default function App() {
               </EuiButtonEmpty>
             </EuiToolTip>
           </EuiHeaderSectionItem>
+          {detectors && (
+            <EuiHeaderSectionItem>
+              <EuiToolTip content={`${detectors.tip} Open the Pipeline page for details.`}>
+                <EuiButtonEmpty
+                  size="xs"
+                  color="text"
+                  onClick={() => navigate({ page: "pipeline", alert: null, ip: null })}
+                >
+                  <EuiHealth color={detectors.color}>{detectors.text}</EuiHealth>
+                </EuiButtonEmpty>
+              </EuiToolTip>
+            </EuiHeaderSectionItem>
+          )}
           <EuiHeaderSectionItem>
             <EuiHealth
               color={connected == null ? "subdued" : connected ? "success" : "danger"}
@@ -266,7 +311,7 @@ export default function App() {
               {connected == null
                 ? "connecting…"
                 : connected
-                  ? `connected${updatedAt ? " · updated " + updatedAt.toLocaleTimeString() : ""}`
+                  ? `connected${updatedAt ? " · updated " + updatedAt.toLocaleTimeString([], { hour12: false }) : ""}`
                   : "API unreachable"}
             </EuiHealth>
           </EuiHeaderSectionItem>

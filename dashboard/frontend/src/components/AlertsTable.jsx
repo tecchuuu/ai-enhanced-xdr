@@ -7,16 +7,37 @@ import {
   EuiSpacer,
   EuiButtonIcon,
   EuiIconTip,
+  EuiText,
 } from "@elastic/eui";
 import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
 import MitreLink from "./MitreLink";
-import { fmtTime } from "../lib/format";
+import { fmtTime, fmtScore, displayScore, modelLabel } from "../lib/format";
 import { useNav } from "../lib/nav";
+
+// The alert's name, with its type and ATT&CK technique on a second line —
+// the column an analyst reads first gets the width, not the timestamp.
+function AlertCell({ a }) {
+  const type = a.category ? a.category.replace(/_/g, " ") : null;
+  return (
+    <div>
+      <div>{a.description ?? "—"}</div>
+      {(type || a.mitre) && (
+        <EuiText size="xs" color="subdued">
+          {type}
+          {type && a.mitre && " · "}
+          {a.mitre && <MitreLink id={a.mitre} tactic={a.tactic} />}
+        </EuiText>
+      )}
+    </div>
+  );
+}
 
 // showSource: off on single-source pages, where every row would say the same thing.
 // Searching is the page's job (server-side, see FeedSearch); the table only
 // filters what it was given by triage state. Opening an alert goes through the
 // URL (App renders the one alert flyout), so every alert has a link.
+// The rule id is left to the alert's detail panel: a number like 100001 tells
+// a reader nothing the name doesn't.
 export default function AlertsTable({
   alerts = [],
   loading,
@@ -39,7 +60,7 @@ export default function AlertsTable({
     {
       // a keyboard-reachable way in; the whole row is also clickable
       name: "",
-      width: "40px",
+      width: "36px",
       render: (a) => (
         <EuiButtonIcon
           iconType="inspect"
@@ -51,50 +72,54 @@ export default function AlertsTable({
         />
       ),
     },
-    { field: "timestamp", name: "Time", render: fmtTime, sortable: true, width: "170px" },
-    { field: "agent", name: "Agent", sortable: true, width: "110px" },
-    { field: "rule_id", name: "Rule ID", sortable: true, width: "80px" },
+    { field: "timestamp", name: "Time", render: fmtTime, sortable: true, width: "140px" },
     {
       field: "level",
       name: "Severity",
       render: (level) => <SeverityBadge level={level} />,
       sortable: true,
-      width: "120px",
+      width: "112px",
     },
-    { field: "description", name: "Description", truncateText: true },
-    {
-      field: "category",
-      name: "Category",
-      sortable: true,
-      width: "140px",
-      render: (c) => (c ? c.replace(/_/g, " ") : "—"),
+    { field: "description", name: "Alert", sortable: true, render: (_d, a) => <AlertCell a={a} /> },
+    showScore && {
+      field: "score",
+      name: (
+        <>
+          Score{" "}
+          <EuiIconTip
+            type="info"
+            color="subdued"
+            size="s"
+            content="How unusual the model found this minute — higher is more unusual. Each model has its own scale, so compare scores within one model, not across models."
+          />
+        </>
+      ),
+      sortable: (a) => displayScore(a.score) ?? -Infinity,
+      width: "92px",
+      render: fmtScore,
     },
-    {
-      field: "mitre",
-      name: "MITRE",
-      sortable: true,
-      width: "100px",
-      render: (id, a) => <MitreLink id={id} tactic={a.tactic} />,
-    },
+    // which occupant of the swappable inference slot produced it
+    showScore && { field: "model", name: "Model", sortable: true, width: "125px", render: modelLabel },
+    { field: "agent", name: "Agent", sortable: true, width: "105px" },
     showSource && {
       field: "source",
       name: "Source",
       render: (source) => <SourceBadge source={source} />,
       sortable: true,
-      width: "100px",
+      width: "80px",
     },
     {
       field: "triage_status",
       name: "Triage",
       render: (s) => <TriageBadge status={s} />,
       sortable: true,
-      width: "120px",
+      width: "110px",
     },
     {
       field: "srcip",
       name: "Source IP",
       sortable: true,
-      width: "150px",
+      width: "140px",
       // the IP pivot, without also opening the row's alert
       render: (ip, a) =>
         ip ? (
@@ -115,8 +140,8 @@ export default function AlertsTable({
                   color={a.blocked.unblock_unconfirmed ? "warning" : "danger"}
                   content={
                     a.blocked.unblock_unconfirmed
-                      ? "Unblock sent but not confirmed — the drop may still be in place"
-                      : `Blocked on agent ${a.blocked.agent_id} since ${fmtTime(a.blocked.since)}`
+                      ? "Unblock sent but not confirmed — the block may still be in place"
+                      : `Blocked on ${a.blocked.agent_name ?? `agent ${a.blocked.agent_id}`} since ${fmtTime(a.blocked.since)}`
                   }
                   aria-label="blocked"
                 />
@@ -128,22 +153,6 @@ export default function AlertsTable({
         ),
     },
   ].filter(Boolean);
-
-  if (showScore) {
-    columns.splice(
-      5,
-      0,
-      {
-        field: "score",
-        name: "Anomaly score",
-        sortable: true,
-        width: "120px",
-        render: (s) => (s != null ? s.toFixed(4) : "—"),
-      },
-      // which occupant of the swappable inference slot produced it
-      { field: "model", name: "Model", sortable: true, width: "130px", render: (m) => m ?? "—" }
-    );
-  }
 
   return (
     <>

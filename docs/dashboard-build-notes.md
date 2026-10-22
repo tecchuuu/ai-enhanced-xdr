@@ -4,6 +4,27 @@
 what was added on top of the original console, the contracts involved, and what
 still needs verifying against a live stack.*
 
+## Revision after a cybersecurity lecturer's review (2026-10-22)
+
+A lecturer who reviewed the console from the screen alone (no pipeline
+background) found the wording unclear, the severity colours incomplete, and the
+two alert pages inconsistent. All changes are presentation; no detector,
+pipeline or stored data changed. See failure_log Entry 43.
+
+| Was | Now | Why |
+|---|---|---|
+| Security events | **Wazuh alerts** | an *event* is any log line; these are alerts raised by rules (read as "Windows events") |
+| Detection split + Metrics (two pages) | **Rules vs AI** (one page: tiles, then the minute-by-minute view) | Metrics was six tiles on an empty page, three of them repeated |
+| "Minutes AI-only (rules silent)", "missed by rules" | **Flagged only by AI** (counted in AI detections, not minutes) | the console has no ground truth: rule/AI disagreement is not proof the rules missed anything |
+| AI FP rate = false positives / *all* AI detections (0.0% before any review) | false positives / **reviewed** AI detections; "—" until one is reviewed (`ai_reviewed`, `false_positive_rate: null`) | unreviewed detections aren't known to be right |
+| Severity 12+ critical, 10+ high; only critical coloured | Wazuh's dashboard bands: **15+ critical, 12–14 high, 7–11 medium, 0–6 low**, coloured red / orange / yellow / slate | same name for the same alert in both UIs; the SOC colour convention |
+| Source colours orange (rule) / green (AI) | blue (Wazuh) / purple (AI) | off the severity ramp, so a Wazuh row never reads as "high" |
+| Anomaly score as stored (−0.71, lower = worse) | shown flipped (**0.71, higher = more unusual**), each model on its own scale | the direction analysts expect; the assistant's prompt uses the same numbers |
+| "window", "buffer", "heartbeat", rule id 100001 in tables | "minute", "collected", "check-in"; rule id only for Wazuh rules, in the detail panel | code words on screen |
+| Warning banner on every page per silent detector | one detector status in the header | a standby detector put a warning on every screen |
+| Agent `001` in the response log | agent name (`agent_name`, cached id→name from the Wazuh API) | |
+| AI page only had a chart | **Alerts by rule** chart on Wazuh alerts too; integer axes, counts on bars, height by bar count | the two alert pages read the same way |
+
 ## What was added
 
 Four capability groups, all serving the "does the AI add value, and can an
@@ -21,7 +42,7 @@ analyst act on it" story — not decoration.
 | **Related events** — rule alerts around one alert | `GET /api/alerts/related` | panel in `AlertFlyout` |
 | **Raw document** — the stored `_source` behind an alert | `GET /api/alerts/doc` | accordion in `AlertFlyout` |
 | **Why it fired** — window features vs the fit's baseline, score vs cutoff | consumers write `ai.features` / `ai.baseline` / `ai.threshold` / `ai.windows_scored` (`ai-stack/pipeline/consumer_common.py`) | `WhyItFired` panel in the AI alert flyout; the explainer prompt uses the same fields |
-| **Pipeline health** — is each part alive | consumers heartbeat into `ai-pipeline-status`; `GET /api/pipeline/status` | **Pipeline** page; `PipelineNotice` on Overview / AI detections |
+| **Pipeline health** — is each part alive | consumers heartbeat into `ai-pipeline-status`; `GET /api/pipeline/status` | **Pipeline** page; detector status in the header (was `PipelineNotice` banners until 2026-10-22) |
 | **Detection split** — rule vs AI, minute by minute | `/api/alerts/combined` (scoped) | **Detection split** page (replaces `dashboard.html`) |
 | **Model** — which inference-slot occupant flagged it | `ai.model` (always written); `ai_by_model` in `/api/metrics` | Model column on AI detections; by-model line on Metrics |
 | **Access** — optional shared key, analyst attribution | `DASHBOARD_API_KEY` → `X-API-Key` on every `/api` call but `/api/health`; `X-Analyst` → `initiated_by` / `updated_by`; CORS limited to `ALLOWED_ORIGINS` | `SessionModal` (asks once per browser), analyst name in the header, **By** column in the response log |

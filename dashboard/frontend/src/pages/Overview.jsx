@@ -6,7 +6,6 @@ import { scopeParams, scopeDeps } from "../lib/scope";
 import { useNav } from "../lib/nav";
 import { usePalette } from "../theme/ThemeProvider";
 import StatPanels from "../components/StatPanels";
-import PipelineNotice from "../components/PipelineNotice";
 import AlertsTable from "../components/AlertsTable";
 import AlertsOverTime from "../components/AlertsOverTime";
 import HBarChart from "../components/HBarChart";
@@ -52,7 +51,6 @@ export default function Overview({ scope }) {
 
   return (
     <>
-      <PipelineNotice />
       <StatPanels metrics={metrics} />
       <EuiSpacer />
       <EuiFlexGroup>
@@ -65,17 +63,18 @@ export default function Overview({ scope }) {
           />
         </EuiFlexItem>
         <EuiFlexItem grow={1}>
+          {/* counted from Wazuh alerts at every level, so it wears the Wazuh color */}
           <HBarChart
             title="Top source IPs"
-            info="Most active alert sources in this range, all rule levels. Click a bar to open the IP."
+            info="The addresses behind the most Wazuh alerts in this range, at every level. Click a bar to see everything about that IP."
             data={ips}
             seriesName="Alerts"
-            color={p.single}
+            color={p.rule}
             onBarClick={openIp}
             empty={{
               icon: "globe",
               title: "No source IPs yet",
-              body: "No alerts carrying a source IP in this range. Attacks from another host will populate this; loopback traffic will not.",
+              body: "No alerts with a source IP in this range. Attacks from another machine will show here; traffic from the server itself will not.",
             }}
           />
         </EuiFlexItem>
@@ -83,15 +82,11 @@ export default function Overview({ scope }) {
       <EuiSpacer />
       <EuiPanel hasBorder>
         <PanelTitle
-          title="Latest detections"
-          info="The most recent from both streams in this range (rules at level 10+). Full feeds under Security events and AI detections."
+          title="Latest alerts"
+          info="The newest Wazuh alerts (level 10+) and AI detections together. The full lists are under Wazuh alerts and AI detections."
         />
         <EuiSpacer size="s" />
-        <AlertsTable
-          alerts={recent ?? []}
-          loading={recent == null}
-          showTriageFilter={false}
-        />
+        <AlertsTable alerts={recent ?? []} loading={recent == null} showTriageFilter={false} />
       </EuiPanel>
     </>
   );

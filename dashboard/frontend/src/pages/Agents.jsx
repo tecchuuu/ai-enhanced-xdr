@@ -40,7 +40,7 @@ export default function Agents() {
       field: "name",
       name: "Name",
       sortable: true,
-      // straight to this agent's alerts: Security events scoped to it
+      // straight to this agent's alerts: Wazuh alerts scoped to it
       render: (name) => (
         <EuiToolTip content="Show this agent's alerts">
           <EuiLink onClick={() => goto({ page: "events", agent: name })}>{name}</EuiLink>

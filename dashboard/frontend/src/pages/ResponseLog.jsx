@@ -8,7 +8,7 @@ import {
 } from "@elastic/eui";
 import { getResponseLog } from "../api";
 import { usePolling } from "../lib/usePolling";
-import { fmtTime } from "../lib/format";
+import { fmtTime, refText } from "../lib/format";
 import BlockedIps from "../components/BlockedIps";
 import PanelTitle from "../components/PanelTitle";
 
@@ -32,10 +32,20 @@ export default function ResponseLog() {
   }, 15000);
 
   const columns = [
-    { field: "timestamp", name: "Time", render: fmtTime, sortable: true, width: "170px" },
-    { field: "action", name: "Action", width: "110px" },
+    { field: "timestamp", name: "Time", render: fmtTime, sortable: true, width: "140px" },
+    {
+      field: "action",
+      name: "Action",
+      width: "90px",
+      render: (a) => (a === "block-ip" ? "block" : a === "unblock-ip" ? "unblock" : a),
+    },
     { field: "srcip", name: "Target IP", width: "130px" },
-    { field: "agent_id", name: "Agent", width: "80px" },
+    {
+      field: "agent_name",
+      name: "Agent",
+      width: "110px",
+      render: (name, row) => name ?? row.agent_id ?? "—",
+    },
     { field: "initiated_by", name: "By", width: "110px", render: (by) => by ?? "—" },
     {
       field: "status",
@@ -43,7 +53,7 @@ export default function ResponseLog() {
       width: "110px",
       render: (s) => <EuiBadge color={STATUS_COLOR[s] ?? "hollow"}>{s}</EuiBadge>,
     },
-    { field: "alert_ref", name: "Triggered by", truncateText: true },
+    { field: "alert_ref", name: "Triggered by", truncateText: true, render: refText },
     { field: "detail", name: "Detail", truncateText: true },
   ];
 
@@ -54,7 +64,7 @@ export default function ResponseLog() {
       <EuiPanel hasBorder>
       <PanelTitle
         title="Response actions"
-        info="Every action initiated from this console, refusals included, with who did it. The audit trail lives in the ai-responses-* indices."
+        info="Every block and unblock started from this console, including the ones it refused, and who started them. Stored in the ai-responses-* indices."
       />
       <EuiSpacer size="s" />
       {actions?.length === 0 ? (

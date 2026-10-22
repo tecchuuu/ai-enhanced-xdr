@@ -7,13 +7,13 @@ import { usePalette } from "../theme/ThemeProvider";
 import AlertsTable from "../components/AlertsTable";
 import HBarChart from "../components/HBarChart";
 import FeedSearch from "../components/FeedSearch";
-import PipelineNotice from "../components/PipelineNotice";
 
 const LIMIT = 200;
 
 // detections written before the August enrichment carry no category
-const categoryLabel = (c) => (c ? c.replace(/_/g, " ") : "no category");
+const categoryLabel = (c) => (c ? c.replace(/_/g, " ") : "no type");
 
+// Same layout as the Wazuh alerts page: chart, filters, table.
 export default function AiDetections({ scope }) {
   const p = usePalette();
   const [q, setQ] = useState("");
@@ -49,17 +49,16 @@ export default function AiDetections({ scope }) {
 
   return (
     <>
-      <PipelineNotice />
       <HBarChart
-        title="Detections by category"
-        info="Heuristic post-classification of the detections below. The model flags the deviation; the category makes it triageable."
+        title="Detections by attack type"
+        info="The likely attack type of the detections listed below, assigned by simple rules after the model has flagged the minute. The model finds the unusual activity; the type helps decide what to do about it."
         data={categories}
         seriesName="Detections"
         color={p.ai}
         empty={{
-          icon: "chartBarVertical",
+          icon: "chartBarHorizontal",
           title: "No detections in this range",
-          body: "Widen the time range, or generate traffic and give the consumer ~10 minutes to fill its window buffer.",
+          body: "Widen the time range, or generate traffic. Each detector needs about 10 minutes of activity before it starts flagging.",
         }}
       />
       <EuiSpacer />
@@ -67,7 +66,7 @@ export default function AiDetections({ scope }) {
         <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false} wrap>
           <EuiFlexItem style={{ minWidth: 260 }}>
             <FeedSearch
-              placeholder="Search IP, URL, category or text, then Enter"
+              placeholder="Search IP, URL, attack type or text, then Enter"
               onSearch={(v) => {
                 setQ(v);
                 setData(null);
@@ -89,12 +88,7 @@ export default function AiDetections({ scope }) {
             <EuiSpacer size="s" />
           </>
         )}
-        <AlertsTable
-          alerts={alerts}
-          loading={data == null && !error}
-          showScore
-          showSource={false}
-        />
+        <AlertsTable alerts={alerts} loading={data == null && !error} showScore showSource={false} />
       </EuiPanel>
     </>
   );

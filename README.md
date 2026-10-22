@@ -85,23 +85,24 @@ elsewhere).
 python3 -m venv ml-venv && ml-venv/bin/pip install -r requirements.txt
 ```
 
-The console is a Wazuh-style UI (same EUI component library)
-with rule + AI alerts, a shared time range and agent filter, server-side search
-(IP, user, rule ID, text), time charts, threat categories, alert detail flyout
-with related events and the raw document, a **Why it fired** panel on AI
-detections (the window's features against the model's own baseline and score
-cutoff), an IP pivot (every alert from an address, targeted accounts, block
-state — click any IP),
-per-alert triage (status / assignee / note / mark-false-positive), a
-**Detection split** timeline (rule alerts and AI detections minute by minute,
-the AI-only minutes flagged), a **Metrics** page (live rule-vs-AI comparison,
-false-positive rate, MTTR, detections per model), one-click IP
-blocking via Wazuh Active Response with an unblock action and current-block
-view, audit-logged response history, live agent status, and a **Pipeline** page
-(OpenSearch, Wazuh API, each detector's heartbeat, explainer) so a quiet console
-can be told apart from a stopped detector. Light and dark modes are
-both selectable (header toggle, persisted); each has its own validated color
-steps in `src/theme/palette.js` rather than one being a flip of the other. Console
+The console is a Wazuh-style UI (same EUI component library) with **Wazuh
+alerts** and **AI detections** pages laid out alike (a chart, filters, the table),
+a shared time range and agent filter, server-side search (IP, user, rule ID,
+text), Wazuh's own severity bands in the usual SOC colours (critical red, high
+orange, medium yellow, low slate), alert detail flyout with related events and
+the raw document, a **Why it fired** panel on AI detections (the minute's
+numbers against what the model saw as typical, and its score cutoff), an IP
+pivot (every alert from an address, targeted accounts, block state — click any
+IP), per-alert triage (status / assignee / note / mark-false-positive), a
+**Rules vs AI** page (rule alerts and AI detections minute by minute, with the
+counts, "flagged only by AI", and the false-positive rate among reviewed
+detections), one-click IP blocking via Wazuh Active Response with an unblock
+action and current-block view, audit-logged response history, live agent
+status, a detector status indicator in the header, and a **Pipeline** page
+(OpenSearch, Wazuh API, each detector's check-in, the AI assistant) so a quiet
+console can be told apart from a stopped detector. Light and dark modes are
+both selectable (header toggle, persisted); each has its own color steps in
+`src/theme/palette.js` rather than one being a flip of the other. Console
 internals and contracts: `docs/dashboard-build-notes.md`.
 
 ## Why this architecture

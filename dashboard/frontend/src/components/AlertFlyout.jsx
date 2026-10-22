@@ -25,7 +25,7 @@ import {
 } from "@elastic/eui";
 import { SourceBadge, SeverityBadge, TriageBadge, TRIAGE_STATES } from "./badges";
 import { setTriage } from "../api";
-import { fmtTime } from "../lib/format";
+import { fmtTime, fmtScore, modelLabel } from "../lib/format";
 import { useNav } from "../lib/nav";
 import BlockIpModal from "./BlockIpModal";
 import ExplainPanel from "./ExplainPanel";
@@ -39,13 +39,13 @@ const STATUS_OPTIONS = TRIAGE_STATES.map((s) => ({
   label: s === "false_positive" ? "false positive" : s,
 }));
 
-// An AI detection covers a window, not an instant: "10:01:00 – 10:02:00"
+// An AI detection covers a minute, not an instant: "Oct 22, 10:01:00 – 10:02:00"
 function when(alert) {
   if (!alert.timestamp) return "—";
   const secs = Number(/^(\d+)s$/.exec(alert.window ?? "")?.[1]);
   if (alert.source !== "ai" || !secs) return fmtTime(alert.timestamp);
   const end = new Date(Date.parse(alert.timestamp) + secs * 1000);
-  return `${fmtTime(alert.timestamp)} – ${end.toLocaleTimeString()}`;
+  return `${fmtTime(alert.timestamp)} – ${end.toLocaleTimeString([], { hour12: false })}`;
 }
 
 export default function AlertFlyout({ alert, onClose, onRefresh }) {
@@ -125,14 +125,19 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
 
   const ipLink = (ip) => <EuiLink onClick={() => openIp(ip)}>{ip}</EuiLink>;
   const items = [
-    { title: isAi ? "Window" : "Time", description: when(alert) },
+    { title: "Time", description: when(alert) },
     { title: "Agent", description: alert.agent ?? "—" },
-    { title: "Rule ID", description: alert.rule_id ?? "—" },
+    // a Wazuh rule number is something a Wazuh user looks up; the AI's isn't
+    ...(isAi ? [] : [{ title: "Wazuh rule", description: alert.rule_id ?? "—" }]),
   ];
   if (alert.srcip) items.push({ title: "Source IP", description: ipLink(alert.srcip) });
   if (alert.srcuser) items.push({ title: "Source user", description: alert.srcuser });
   if (alert.dstuser) items.push({ title: "Target user", description: alert.dstuser });
-  if (alert.category) items.push({ title: "Category", description: alert.category.replace(/_/g, " ") });
+  if (alert.category)
+    items.push({
+      title: isAi ? "Attack type" : "Rule group",
+      description: alert.category.replace(/_/g, " "),
+    });
   if (alert.mitre)
     items.push({
       title: "MITRE ATT&CK",
@@ -146,18 +151,22 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
 
   if (isAi) {
     items.push(
-      { title: "Model", description: alert.model ?? "—" },
-      { title: "Anomaly score", description: String(alert.score ?? "—") }
+      { title: "Model", description: modelLabel(alert.model) },
+      { title: "Anomaly score", description: `${fmtScore(alert.score)} (higher = more unusual)` }
     );
-    // each lane windows a different feature set (ROADMAP rule 1)
+    // each lane has its own feature set (ROADMAP rule 1). When the detector
+    // recorded its evidence, "Why it fired" already shows these numbers next to
+    // normal — listing them again here would only repeat the table.
+    const evidence = Boolean(alert.features && alert.baseline);
     if (alert.pipeline === "web-streaming") {
-      items.push(
-        { title: "Requests in window", description: String(alert.request_count ?? "—") },
-        { title: "Distinct URLs", description: String(alert.distinct_urls ?? "—") },
-        { title: "Error ratio", description: String(alert.error_ratio ?? "—") },
-        { title: "404 responses", description: String(alert.not_found_count ?? "—") },
-        { title: "POST ratio", description: String(alert.post_ratio ?? "—") }
-      );
+      if (!evidence)
+        items.push(
+          { title: "Requests in this minute", description: String(alert.request_count ?? "—") },
+          { title: "Distinct URLs", description: String(alert.distinct_urls ?? "—") },
+          { title: "Error ratio", description: String(alert.error_ratio ?? "—") },
+          { title: "404 responses", description: String(alert.not_found_count ?? "—") },
+          { title: "POST ratio", description: String(alert.post_ratio ?? "—") }
+        );
       if (alert.top_urls?.length) {
         items.push({
           title: "Top URLs",
@@ -168,9 +177,9 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
           )),
         });
       }
-    } else {
+    } else if (!evidence) {
       items.push(
-        { title: "Events in window", description: String(alert.event_count ?? "—") },
+        { title: "Events in this minute", description: String(alert.event_count ?? "—") },
         { title: "Distinct users", description: String(alert.distinct_users ?? "—") },
         { title: "Events per user", description: String(alert.events_per_user ?? "—") }
       );
@@ -197,8 +206,8 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
         <EuiSpacer size="xs" />
         <EuiText size="s" color="subdued">
           {isAi
-            ? "Flagged by the anomaly model — no signature involved."
-            : "Matched a Wazuh ruleset signature."}
+            ? "Flagged by an AI model as unusual activity — no Wazuh rule involved."
+            : "Raised by a Wazuh detection rule."}
         </EuiText>
         <EuiSpacer size="s" />
         <EuiFlexGroup gutterSize="xs" responsive={false} wrap>
@@ -318,7 +327,8 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
                 <EuiFlexItem grow={false}>
                   <EuiText size="s" color="subdued">
                     {alert.blocked.unblock_unconfirmed ? "Unblock not confirmed for" : "Blocked:"}{" "}
-                    {alert.srcip} on agent {alert.blocked.agent_id} since{" "}
+                    {alert.srcip} on{" "}
+                    {alert.blocked.agent_name ?? `agent ${alert.blocked.agent_id}`} since{" "}
                     {fmtTime(alert.blocked.since)}
                   </EuiText>
                 </EuiFlexItem>
