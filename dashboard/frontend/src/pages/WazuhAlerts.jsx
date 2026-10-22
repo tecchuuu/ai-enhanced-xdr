@@ -8,8 +8,9 @@ import {
   EuiText,
   EuiCallOut,
 } from "@elastic/eui";
-import { getRuleAlerts } from "../api";
+import { getRuleAlerts, getBreakdown } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { usePagedFeed } from "../lib/usePagedFeed";
 import { scopeParams, scopeDeps } from "../lib/scope";
 import { usePalette } from "../theme/ThemeProvider";
 import AlertsTable from "../components/AlertsTable";
@@ -27,54 +28,35 @@ const LEVELS = [
   { id: "12", label: "High+" },
   { id: "15", label: "Critical" },
 ];
-const LIMIT = 200;
-const TOP_RULES = 8;
-
-// OpenSearch stops counting at 10,000 unless asked to track the exact total
-const fmtTotal = (n) => (n >= 10000 ? "10,000+" : n.toLocaleString());
 
 // The same layout as the AI detections page — chart, filters, table — so the
-// two sides of the console read the same way.
+// two sides of the console read the same way. Both the chart and the table
+// cover every alert matching the filters, not just the page on screen.
 export default function WazuhAlerts({ scope }) {
   const p = usePalette();
   const [minLevel, setMinLevel] = useState("0");
   const [q, setQ] = useState("");
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const [rules, setRules] = useState(null);
+  const { data, error, server } = usePagedFeed(getRuleAlerts, { min_level: minLevel, q }, scope);
 
   usePolling(
     async (isCurrent) => {
       try {
-        const d = await getRuleAlerts({ limit: LIMIT, min_level: minLevel, q, ...scopeParams(scope) });
-        if (!isCurrent()) return;
-        setData(d);
-        setError(null);
-      } catch (e) {
-        if (isCurrent()) setError(String(e.message ?? e));
+        const b = await getBreakdown({ source: "rule", min_level: minLevel, q, ...scopeParams(scope) });
+        if (isCurrent()) setRules(b.items);
+      } catch {
+        /* the table reports API problems */
       }
     },
-    15000,
+    30000,
     [minLevel, q, ...scopeDeps(scope)]
   );
-
-  const alerts = data?.alerts ?? [];
-
-  // counted from the loaded alerts, so the chart describes the table below it
-  const counts = {};
-  for (const a of alerts) {
-    const label = a.description ?? `rule ${a.rule_id ?? "?"}`;
-    counts[label] = (counts[label] ?? 0) + 1;
-  }
-  const rules = Object.entries(counts)
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, TOP_RULES);
 
   return (
     <>
       <HBarChart
         title="Alerts by rule"
-        info="Which Wazuh rules fired most among the alerts listed below (the level filter and search apply)."
+        info="Which Wazuh rules fired most, counted over every alert matching the level filter and search in this range — not just the page shown below."
         data={rules}
         seriesName="Alerts"
         color={p.rule}
@@ -88,30 +70,22 @@ export default function WazuhAlerts({ scope }) {
       <EuiPanel hasBorder>
         <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false} wrap>
           <EuiFlexItem style={{ minWidth: 260 }}>
-            <FeedSearch
-              placeholder="Search IP, user, rule or text, then Enter"
-              onSearch={(v) => {
-                setQ(v);
-                setData(null);
-              }}
-            />
+            <FeedSearch placeholder="Search IP, user, rule or text, then Enter" onSearch={setQ} />
           </EuiFlexItem>
           <EuiFlexItem grow={false}>
             <EuiButtonGroup
               legend="Minimum rule level"
               options={LEVELS}
               idSelected={minLevel}
-              onChange={(id) => {
-                setMinLevel(id);
-                setData(null);
-              }}
+              onChange={setMinLevel}
               buttonSize="compressed"
             />
           </EuiFlexItem>
           {data && (
             <EuiFlexItem grow={false}>
               <EuiText size="xs" color="subdued">
-                Latest {alerts.length} of {fmtTotal(data.count)}
+                {data.count.toLocaleString()} alert{data.count === 1 ? "" : "s"}
+                {data.count > 10000 && " — the newest 10,000 can be paged through; narrow the range for the rest"}
               </EuiText>
             </EuiFlexItem>
           )}
@@ -123,7 +97,12 @@ export default function WazuhAlerts({ scope }) {
             <EuiSpacer size="s" />
           </>
         )}
-        <AlertsTable alerts={alerts} loading={data == null && !error} showSource={false} />
+        <AlertsTable
+          alerts={data?.alerts ?? []}
+          loading={data == null && !error}
+          showSource={false}
+          server={server}
+        />
       </EuiPanel>
     </>
   );

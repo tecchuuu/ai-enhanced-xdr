@@ -1,58 +1,41 @@
 import { useState } from "react";
 import { EuiPanel, EuiSpacer, EuiCallOut, EuiFlexGroup, EuiFlexItem, EuiText } from "@elastic/eui";
-import { getAiAlerts } from "../api";
+import { getAiAlerts, getBreakdown } from "../api";
 import { usePolling } from "../lib/usePolling";
+import { usePagedFeed } from "../lib/usePagedFeed";
 import { scopeParams, scopeDeps } from "../lib/scope";
 import { usePalette } from "../theme/ThemeProvider";
 import AlertsTable from "../components/AlertsTable";
 import HBarChart from "../components/HBarChart";
 import FeedSearch from "../components/FeedSearch";
 
-const LIMIT = 200;
-
-// detections written before the August enrichment carry no category
-const categoryLabel = (c) => (c ? c.replace(/_/g, " ") : "no type");
-
-// Same layout as the Wazuh alerts page: chart, filters, table.
+// Same layout as the Wazuh alerts page: chart, filters, table — both covering
+// every detection matching the search in this range, not just one page.
 export default function AiDetections({ scope }) {
   const p = usePalette();
   const [q, setQ] = useState("");
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const [types, setTypes] = useState(null);
+  const { data, error, server } = usePagedFeed(getAiAlerts, { q }, scope);
 
   usePolling(
     async (isCurrent) => {
       try {
-        const d = await getAiAlerts({ limit: LIMIT, q, ...scopeParams(scope) });
-        if (!isCurrent()) return;
-        setData(d);
-        setError(null);
-      } catch (e) {
-        if (isCurrent()) setError(String(e.message ?? e));
+        const b = await getBreakdown({ source: "ai", q, ...scopeParams(scope) });
+        if (isCurrent()) setTypes(b.items);
+      } catch {
+        /* the table reports API problems */
       }
     },
-    15000,
+    30000,
     [q, ...scopeDeps(scope)]
   );
-
-  const alerts = data?.alerts ?? [];
-
-  // counted from the loaded detections, so the chart describes the table below it
-  const counts = {};
-  for (const a of alerts) {
-    const label = categoryLabel(a.category);
-    counts[label] = (counts[label] ?? 0) + 1;
-  }
-  const categories = Object.entries(counts)
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count);
 
   return (
     <>
       <HBarChart
         title="Detections by attack type"
-        info="The likely attack type of the detections listed below, assigned by simple rules after the model has flagged the minute. The model finds the unusual activity; the type helps decide what to do about it."
-        data={categories}
+        info="The likely attack type of every detection matching the search in this range, assigned by simple rules after the model has flagged the minute. The model finds the unusual activity; the type helps decide what to do about it."
+        data={types}
         seriesName="Detections"
         color={p.ai}
         empty={{
@@ -65,18 +48,12 @@ export default function AiDetections({ scope }) {
       <EuiPanel hasBorder>
         <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false} wrap>
           <EuiFlexItem style={{ minWidth: 260 }}>
-            <FeedSearch
-              placeholder="Search IP, URL, attack type or text, then Enter"
-              onSearch={(v) => {
-                setQ(v);
-                setData(null);
-              }}
-            />
+            <FeedSearch placeholder="Search IP, URL, attack type or text, then Enter" onSearch={setQ} />
           </EuiFlexItem>
           {data && (
             <EuiFlexItem grow={false}>
               <EuiText size="xs" color="subdued">
-                Latest {alerts.length} of {data.count.toLocaleString()}
+                {data.count.toLocaleString()} detection{data.count === 1 ? "" : "s"}
               </EuiText>
             </EuiFlexItem>
           )}
@@ -88,7 +65,13 @@ export default function AiDetections({ scope }) {
             <EuiSpacer size="s" />
           </>
         )}
-        <AlertsTable alerts={alerts} loading={data == null && !error} showScore showSource={false} />
+        <AlertsTable
+          alerts={data?.alerts ?? []}
+          loading={data == null && !error}
+          showScore
+          showSource={false}
+          server={server}
+        />
       </EuiPanel>
     </>
   );

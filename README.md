@@ -85,10 +85,12 @@ elsewhere).
 python3 -m venv ml-venv && ml-venv/bin/pip install -r requirements.txt
 ```
 
-The console is a Wazuh-style UI (same EUI component library) with **Wazuh
-alerts** and **AI detections** pages laid out alike (a chart, filters, the table),
-a shared time range and agent filter, server-side search (IP, user, rule ID,
-text), Wazuh's own severity bands in the usual SOC colours (critical red, high
+The console is a Wazuh-style UI (same EUI component library) with an **Alert
+queue** (open alerts from both sources, most severe and longest-waiting first,
+its open critical/high count in the menu), **Wazuh alerts** and **AI
+detections** pages laid out alike (a chart, filters, the table) that page
+through every alert on the server, a shared time range and agent filter,
+server-side search (IP, user, rule ID, text), Wazuh's own severity bands in the usual SOC colours (critical red, high
 orange, medium yellow, low slate), alert detail flyout with related events and
 the raw document, a **Why it fired** panel on AI detections (the minute's
 numbers against what the model saw as typical, and its score cutoff), an IP

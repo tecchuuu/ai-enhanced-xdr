@@ -48,9 +48,12 @@ const postJson = (path, payload) =>
 export const getHealth = () => fetchJson("/api/health");
 
 // scoped endpoints take {start, end, agent} (see lib/scope.js) plus their own
-// params, in the API's snake_case: limit, min_level, q
+// params, in the API's snake_case: limit, offset, min_level, q, triage
+// ("new,investigating"), sort ("timestamp" | "level"), order
 export const getRuleAlerts = (params) => fetchJson(`/api/alerts/rule${query(params)}`);
 export const getAiAlerts = (params) => fetchJson(`/api/alerts/ai${query(params)}`);
+export const getBreakdown = (params) => fetchJson(`/api/alerts/breakdown${query(params)}`);
+export const getQueue = (params) => fetchJson(`/api/queue${query(params)}`);
 export const getCombined = (params) => fetchJson(`/api/alerts/combined${query(params)}`);
 export const getHistogram = (params) => fetchJson(`/api/alerts/histogram${query(params)}`);
 export const getTopSrcIps = (params) => fetchJson(`/api/alerts/top_srcips${query(params)}`);

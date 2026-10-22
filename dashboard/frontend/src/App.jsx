@@ -17,8 +17,9 @@ import {
   EuiFlyout,
   EuiFlyoutBody,
   EuiCallOut,
+  EuiNotificationBadge,
 } from "@elastic/eui";
-import { getHealth, getAgents, getAlert, getPipelineStatus } from "./api";
+import { getHealth, getAgents, getAlert, getPipelineStatus, getQueue } from "./api";
 import { usePolling } from "./lib/usePolling";
 import { useHashRoute } from "./lib/route";
 import { NavContext } from "./lib/nav";
@@ -28,6 +29,7 @@ import IpFlyout from "./components/IpFlyout";
 import AlertFlyout from "./components/AlertFlyout";
 import SessionModal from "./components/SessionModal";
 import Overview from "./pages/Overview";
+import AlertQueue from "./pages/AlertQueue";
 import WazuhAlerts from "./pages/WazuhAlerts";
 import AiDetections from "./pages/AiDetections";
 import RulesVsAi from "./pages/RulesVsAi";
@@ -49,6 +51,14 @@ const PAGES = {
     description: "Wazuh's rule alerts and the AI's detections, side by side.",
     component: Overview,
     scoped: true,
+  },
+  // where an analyst works: not tied to the time picker (see AlertQueue)
+  queue: {
+    title: "Alert queue",
+    icon: "bell",
+    description:
+      "Alerts that still need a decision — most severe first, and within a severity the longest-waiting first.",
+    component: AlertQueue,
   },
   events: {
     title: "Wazuh alerts",
@@ -96,9 +106,11 @@ const PAGES = {
 // old links: the Metrics page was merged into Rules vs AI
 const PAGE_ALIASES = { metrics: "split" };
 
-// grouped so the nav reads as three jobs rather than a flat list of links
+// grouped so the nav reads as three jobs rather than a flat list of links.
+// Overview first, the work queue right after it — the usual SIEM order
+// (QRadar: Dashboard, Offenses; Sentinel: Overview, Incidents).
 const NAV_GROUPS = [
-  { id: "grp-detections", name: "Detections", pages: ["overview", "events", "ai"] },
+  { id: "grp-detections", name: "Detections", pages: ["overview", "queue", "events", "ai"] },
   { id: "grp-analysis", name: "Analysis", pages: ["split", "responses"] },
   { id: "grp-system", name: "System", pages: ["pipeline", "agents"] },
 ];
@@ -160,6 +172,32 @@ export default function App() {
     }
   }, 30000);
   const detectors = detectorSummary(consumers);
+
+  // the queue's count beside its menu entry, so open urgent work shows on every
+  // page: critical + high when there are any, otherwise everything still open
+  const [queueCounts, setQueueCounts] = useState(null);
+  usePolling(
+    async (isCurrent) => {
+      try {
+        const q = await getQueue({ limit: 0 });
+        if (isCurrent()) setQueueCounts(q);
+      } catch {
+        /* the connection indicator already reports an unreachable API */
+      }
+    },
+    30000,
+    [refreshKey]
+  );
+  const urgent = (queueCounts?.severity?.critical ?? 0) + (queueCounts?.severity?.high ?? 0);
+  const queueBadge = urgent ? (
+    <EuiNotificationBadge color="accent" title={`${urgent} critical or high alerts open`}>
+      {urgent}
+    </EuiNotificationBadge>
+  ) : queueCounts?.count ? (
+    <EuiNotificationBadge color="subdued" title={`${queueCounts.count} alerts open`}>
+      {queueCounts.count}
+    </EuiNotificationBadge>
+  ) : null;
 
   // each page loads and polls its own data; the header only tracks the API
   usePolling(async (isCurrent) => {
@@ -261,7 +299,14 @@ export default function App() {
     name: g.name,
     items: g.pages.map((id) => ({
       id,
-      name: PAGES[id].title,
+      name:
+        id === "queue" && queueBadge ? (
+          <>
+            {PAGES[id].title} {queueBadge}
+          </>
+        ) : (
+          PAGES[id].title
+        ),
       icon: <EuiIcon type={PAGES[id].icon} />,
       onClick: () => navigate({ page: id, alert: null, ip: null }),
       isSelected: page === id,

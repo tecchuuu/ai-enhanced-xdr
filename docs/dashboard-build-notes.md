@@ -24,6 +24,8 @@ pipeline or stored data changed. See failure_log Entry 43.
 | Warning banner on every page per silent detector | one detector status in the header | a standby detector put a warning on every screen |
 | Agent `001` in the response log | agent name (`agent_name`, cached id→name from the Wazuh API) | |
 | AI page only had a chart | **Alerts by rule** chart on Wazuh alerts too; integer axes, counts on bars, height by bar count | the two alert pages read the same way |
+| Feeds loaded the newest 200; "200 of 1,400" with no way to the rest; the chart counted only those 200 | **server-side paging** (`offset`, `sort`=timestamp\|level on `/api/alerts/rule` and `/ai`, up to 10,000 deep), the review-state filter applied on the server (`triage=new,investigating`, an ids filter over the triage index) with `triage_counts` over the whole view; charts from `GET /api/alerts/breakdown` over the whole view | a total you can't page to reads as broken; a chart over a sample contradicts the total above it |
+| No work list — triage spread across the feeds, Overview sorted by time | **Alert queue** page (`GET /api/queue`): open alerts (new / investigating) from the last 7 days, Wazuh level 10+ and every AI detection, most severe first, longest-waiting first; tiles for open critical / high, being investigated, oldest unreviewed; the count of open critical + high beside it in the menu | the page a SOC analyst starts from (Sentinel Incidents, QRadar Offenses, Splunk ES Incident Review); not tied to the time picker, so an open critical alert can't drop off |
 
 ## What was added
 

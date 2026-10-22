@@ -309,49 +309,201 @@ def health():
     return {"status": "ok", "cluster": client.info()["cluster_name"],
             "auth_required": bool(API_KEY)}
 
+# ----------------------------------------------------------------- feeds
+# The feeds page on the server, so every alert in a range can be reached, not
+# just the newest batch. OpenSearch refuses from + size past its default
+# max_result_window, so paging stops at 10,000 — narrow the range past that.
+FEED_MAX = 10_000
+FEED_SORT = {"timestamp": "timestamp", "level": "rule.level"}
+
+
+def _feed_sort(sort, order):
+    field = FEED_SORT.get(sort, "timestamp")
+    direction = "asc" if order == "asc" else "desc"
+    tiebreak = [] if field == "timestamp" else [{"timestamp": {"order": "desc"}}]
+    return [{field: {"order": direction}}, *tiebreak]
+
+
+def _triage_states(prefix):
+    """{status: [ids]} for one source's alerts ("rule:" / "ai:"), the prefix
+    stripped so the ids match the alert index. The triage index is small (one
+    record per alert someone touched), so reading it whole is cheap."""
+    try:
+        res = client.search(index=TRIAGE_INDEX, body={"size": FEED_MAX, "_source": ["status"]})
+    except Exception:
+        return {}
+    states = {}
+    for h in res["hits"]["hits"]:
+        if h["_id"].startswith(prefix):
+            states.setdefault(h["_source"].get("status") or "new", []).append(h["_id"][len(prefix):])
+    return states
+
+
+def _triage_filter(states, triage):
+    """Filter clauses for a selection of triage states ("new,investigating").
+    Triage lives in its own index, so the selection becomes an ids filter:
+    the ids in the chosen states — or, when "new" is chosen (alerts nobody has
+    touched have no record), everything except the ids in the other states."""
+    wanted = {s for s in (triage or "").split(",") if s in TRIAGE_STATES}
+    if not wanted or wanted == set(TRIAGE_STATES):
+        return []
+    if "new" in wanted:
+        others = [i for s, ids in states.items() if s not in wanted for i in ids]
+        return [{"bool": {"must_not": [{"ids": {"values": others}}]}}] if others else []
+    return [{"ids": {"values": [i for s in wanted for i in states.get(s, [])]}}]
+
+
+def _triage_counts(index, base, states):
+    """How many alerts in the feed's current view are in each triage state —
+    over the whole view, so the filter badges match what paging can reach."""
+    def _n(filters):
+        try:
+            return client.count(index=index, body={"query": {"bool": {"filter": filters}}})["count"]
+        except Exception:
+            return 0
+    counts = {s: (_n([*base, {"ids": {"values": states[s]}}]) if states.get(s) else 0)
+              for s in TRIAGE_STATES if s != "new"}
+    counts["new"] = max(0, _n(base) - sum(counts.values()))
+    return counts
+
+
+def _feed(index, prefix, fmt, base, limit, offset, triage, sort, order, with_counts):
+    states = _triage_states(prefix)
+    offset = max(0, min(offset, FEED_MAX - 1))
+    size = max(0, min(limit, FEED_MAX - offset))
+    res = client.search(index=index, body={
+        "from": offset,
+        "size": size,
+        "sort": _feed_sort(sort, order),
+        "track_total_hits": True,
+        "query": {"bool": {"filter": [*base, *_triage_filter(states, triage)]}},
+    })
+    out = {
+        "count": res["hits"]["total"]["value"],
+        "alerts": _merge_state([fmt(h) for h in res["hits"]["hits"]]),
+    }
+    if with_counts:
+        out["triage_counts"] = _triage_counts(index, base, states)
+    return out
+
+
 @app.get("/api/alerts/rule")
 def rule_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
                 end: str | None = None, agent: str | None = None,
-                q: str | None = None):
-    """Rule-based alerts from Wazuh, newest first, in the console's scope."""
-    body = {
-        "size": limit,
-        "sort": [{"timestamp": {"order": "desc"}}],
-        "query": {"bool": {"filter": [
-            {"range": {"rule.level": {"gte": min_level}}},
-            *_optional_time_filter(start, end),
-            *_agent_filter(agent),
-            *_search_filter(q, RULE_SEARCH_FIELDS),
-        ]}},
-    }
-    res = client.search(index=RULE_INDEX, body=body)
-    return {
-        "count": res["hits"]["total"]["value"],
-        "alerts": _merge_state([_fmt_rule(h) for h in res["hits"]["hits"]]),
-    }
+                q: str | None = None, offset: int = 0, triage: str | None = None,
+                sort: str = "timestamp", order: str = "desc", with_counts: bool = True):
+    """Rule-based alerts from Wazuh in the console's scope, one page at a time
+    (offset/limit), newest first unless sorted by level. `triage` keeps only
+    alerts in those review states; `triage_counts` covers the whole view."""
+    base = [
+        {"range": {"rule.level": {"gte": min_level}}},
+        *_optional_time_filter(start, end),
+        *_agent_filter(agent),
+        *_search_filter(q, RULE_SEARCH_FIELDS),
+    ]
+    return _feed(RULE_INDEX, "rule:", _fmt_rule, base, limit, offset, triage, sort, order,
+                 with_counts)
 
 @app.get("/api/alerts/ai")
 def ai_alerts(limit: int = 50, min_level: int = 0, start: str | None = None,
               end: str | None = None, agent: str | None = None,
-              q: str | None = None):
-    """AI-detected anomalies (source=morpheus_ai), newest first, in scope."""
+              q: str | None = None, offset: int = 0, triage: str | None = None,
+              sort: str = "timestamp", order: str = "desc", with_counts: bool = True):
+    """AI-detected anomalies (source=morpheus_ai) in scope, paged like the
+    rule feed."""
+    base = [
+        {"range": {"rule.level": {"gte": min_level}}},
+        *_optional_time_filter(start, end),
+        *_agent_filter(agent),
+        *_search_filter(q, AI_SEARCH_FIELDS),
+    ]
     try:
-        res = client.search(index=AI_INDEX, body={
-            "size": limit,
-            "sort": [{"timestamp": {"order": "desc"}}],
-            "query": {"bool": {"filter": [
-                {"range": {"rule.level": {"gte": min_level}}},
-                *_optional_time_filter(start, end),
-                *_agent_filter(agent),
-                *_search_filter(q, AI_SEARCH_FIELDS),
-            ]}},
-        })
+        return _feed(AI_INDEX, "ai:", _fmt_ai, base, limit, offset, triage, sort, order,
+                     with_counts)
     except Exception:
-        return {"count": 0, "alerts": []}      # index may not exist yet
+        return {"count": 0, "alerts": [], "triage_counts": {}}   # index may not exist yet
 
+
+@app.get("/api/alerts/breakdown")
+def breakdown(source: str = "rule", min_level: int = 0, start: str | None = None,
+              end: str | None = None, agent: str | None = None, q: str | None = None,
+              top: int = 8):
+    """What a feed's current view is made of, counted over the whole view (not
+    the loaded page): Wazuh alerts by rule, AI detections by attack type. The
+    AI side counts from _source, like ai_by_model, so it doesn't depend on how
+    the dynamically mapped ai.category is indexed."""
+    is_ai = source == "ai"
+    filters = [
+        {"range": {"rule.level": {"gte": min_level}}},
+        *_optional_time_filter(start, end),
+        *_agent_filter(agent),
+        *_search_filter(q, AI_SEARCH_FIELDS if is_ai else RULE_SEARCH_FIELDS),
+    ]
+    query = {"bool": {"filter": filters}}
+    if is_ai:
+        try:
+            res = client.search(index=AI_INDEX, body={
+                "size": FEED_MAX, "_source": ["ai.category"], "query": query})
+        except Exception:
+            return {"items": []}
+        c = Counter((h["_source"].get("ai") or {}).get("category") or "no type"
+                    for h in res["hits"]["hits"])
+        items = [{"label": k.replace("_", " "), "count": n} for k, n in c.most_common(top)]
+        return {"items": items}
+    # rule.description is a keyword in the Wazuh alerts template
+    try:
+        res = client.search(index=RULE_INDEX, body={
+            "size": 0, "query": query,
+            "aggs": {"r": {"terms": {"field": "rule.description", "size": top}}}})
+    except Exception:
+        return {"items": []}
+    return {"items": [{"label": b["key"], "count": b["doc_count"]}
+                      for b in res["aggregations"]["r"]["buckets"]]}
+
+
+# ----------------------------------------------------------------- queue
+# The analyst's work list. Not tied to the console's time range: an open
+# critical alert must not drop off the list because the range is "last 24h".
+QUEUE_DAYS = 7
+QUEUE_MAX = 1000
+SEVERITY_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+
+def _severity(level):
+    """Wazuh's dashboard bands — the same as severityName in the console."""
+    level = level or 0
+    return ("critical" if level >= 15 else "high" if level >= 12
+            else "medium" if level >= 7 else "low")
+
+
+@app.get("/api/queue")
+def queue(agent: str | None = None, limit: int = 500):
+    """Alerts still open (new or investigating) from the last QUEUE_DAYS days:
+    Wazuh alerts at ATTACK_LEVEL+ and every AI detection. Most severe first,
+    and within a severity the longest-waiting first — the order a SOC works
+    a queue in. limit=0 returns only the counts (the console's menu badge)."""
+    end_dt = datetime.now(timezone.utc)
+    scope = {"start": (end_dt - timedelta(days=QUEUE_DAYS)).isoformat(),
+             "end": end_dt.isoformat(), "agent": agent, "q": None,
+             "triage": "new,investigating", "with_counts": False}
+    rules = rule_alerts(limit=QUEUE_MAX, min_level=ATTACK_LEVEL, **scope)
+    ai = ai_alerts(limit=QUEUE_MAX, min_level=0, **scope)
+    items = rules["alerts"] + ai["alerts"]
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    items.sort(key=lambda a: (-SEVERITY_RANK[_severity(a.get("level"))],
+                              _parse_ts(a.get("timestamp")) or far))
+
+    sev = Counter(_severity(a.get("level")) for a in items)
+    waiting = [ts for a in items if a.get("triage_status") == "new"
+               for ts in [_parse_ts(a.get("timestamp"))] if ts]
     return {
-        "count": res["hits"]["total"]["value"],
-        "alerts": _merge_state([_fmt_ai(h) for h in res["hits"]["hits"]]),
+        "days": QUEUE_DAYS,
+        "count": rules["count"] + ai["count"],
+        "truncated": rules["count"] > QUEUE_MAX or ai["count"] > QUEUE_MAX,
+        "severity": {s: sev[s] for s in SEVERITY_RANK},
+        "investigating": sum(1 for a in items if a.get("triage_status") == "investigating"),
+        "oldest_new": min(waiting).isoformat() if waiting else None,
+        "alerts": items[:max(0, limit)],
     }
 
 @app.get("/api/alerts/histogram")
@@ -422,7 +574,8 @@ def top_srcips(start: str | None = None, end: str | None = None,
 def combined(limit: int = 100, start: str | None = None, end: str | None = None,
              agent: str | None = None):
     """Both streams merged, newest first (rules at attack level only)."""
-    scope = {"limit": limit, "start": start, "end": end, "agent": agent, "q": None}
+    scope = {"limit": limit, "start": start, "end": end, "agent": agent, "q": None,
+             "with_counts": False}
     rules = rule_alerts(min_level=ATTACK_LEVEL, **scope)["alerts"]
     ai    = ai_alerts(min_level=0, **scope)["alerts"]
     merged = sorted(rules + ai, key=lambda a: a["timestamp"] or "", reverse=True)
