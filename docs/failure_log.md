@@ -473,6 +473,14 @@ because "deploy the same containers on real hardware" is rarely as clean as it s
 - **Two gaps the same review exposed, closed the same day:** the feeds loaded the newest 200 alerts while saying "of 1,400", with no way to the rest and a chart counting only the 200 — now paged on the server, with the review filter and the charts over the whole view. And the console had no work list — the SOC analyst's starting point — so an **Alert queue** was added (open alerts, most severe and longest-waiting first, outside the time picker so nothing open drops off).
 - **Lesson (บทที่ 5):** a console is read by people who did not build the pipeline. Test it on one of them before the defence, not after; and a number that reads "0%" when the truth is "unknown" is a correctness bug, not a cosmetic one.
 
+### Entry 44 — The console went quiet: the manager was reading last week's auth.log (2026-10-31)
+- **Symptom:** while taking the report screenshots, a full `demo_run.sh` attack produced nothing: 0 Wazuh alerts at any level, 0 AI detections, and the detectors stuck at "warming up" after 20 minutes. Every container was up.
+- **Cause:** the manager read the host's SSH log through a **single-file** bind mount (`/var/log/auth.log:/var/log/host_auth.log`). Docker binds the file itself (its inode), not the name. Ubuntu's weekly logrotate renames `auth.log` to `auth.log.1` and creates a new `auth.log`, so the container kept reading the renamed file, which nothing writes to any more. Confirmed by the inode: `stat -c %i /var/log/auth.log` on the host differed from the same command on `/var/log/host_auth.log` inside the manager.
+- **Why nothing flagged it:** the pipeline was healthy end to end, with no events to carry. A heartbeat shows a detector is alive, not that its input is.
+- **Workaround that day:** `docker restart luckyfive_wazuh-wazuh.manager-1` re-binds the current file; the next attack produced 96 Wazuh alerts and 10 AI detections.
+- **Fix:** mount the directory, `/var/log:/var/log/host:ro`, and read `/var/log/host/auth.log`. Inside a directory the name resolves to the current file, and logcollector reopens a file whose inode changed. Apply with `docker compose -p luckyfive_wazuh up -d --force-recreate wazuh.manager` (a plain restart does not re-copy `ossec.conf`, Entry 6).
+- **Lesson:** a single-file bind mount of a rotated log works for exactly one week. Mount the directory.
+
 ## BUILD STATUS (last updated: 2026-10-10 — GPU unblocked; LLM explainer live; Morpheus in the slot)
 - **Steps 1–3 COMPLETE:** Ubuntu 26.04 VM (VMware) → Docker → Wazuh stack running, dashboard verified, `logall_json: yes`, `archives.json` populating. Snapshot: `wazuh-stack-running`. **Now operating as `magi`** (docker group), not root; project lives at `~/ai-enhanced-xdr`, Wazuh stack at `~/wazuh-docker/single-node`.
 - **Step 4 COMPLETE (mock) / PARTIAL (real):**
