@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  EuiButton,
   EuiConfirmModal,
+  EuiModal,
+  EuiModalBody,
+  EuiModalFooter,
+  EuiModalHeader,
+  EuiModalHeaderTitle,
   EuiFormRow,
   EuiSelect,
   EuiText,
@@ -44,25 +50,30 @@ export default function BlockIpModal({ srcip, alertRef, defaultAgentName, onClos
     }
   };
 
+  // a plain modal: EuiConfirmModal always renders a cancel button, which gave
+  // this success notice two identical "Close" buttons
   if (done) {
     return (
-      <EuiConfirmModal
-        title="IP blocked"
-        onCancel={onClose}
-        onConfirm={onClose}
-        confirmButtonText="Close"
-        cancelButtonText="Close"
-        defaultFocusedButton="confirm"
-      >
-        <EuiCallOut
-          title={`firewall-drop executed for ${srcip}`}
-          color="success"
-          iconType="check"
-          size="s"
-        >
-          <p>The action is recorded in the Response log.</p>
-        </EuiCallOut>
-      </EuiConfirmModal>
+      <EuiModal onClose={onClose} role="alertdialog">
+        <EuiModalHeader>
+          <EuiModalHeaderTitle>IP blocked</EuiModalHeaderTitle>
+        </EuiModalHeader>
+        <EuiModalBody>
+          <EuiCallOut
+            title={`firewall-drop executed for ${srcip}`}
+            color="success"
+            iconType="check"
+            size="s"
+          >
+            <p>The action is recorded in the Response log.</p>
+          </EuiCallOut>
+        </EuiModalBody>
+        <EuiModalFooter>
+          <EuiButton onClick={onClose} fill autoFocus>
+            Close
+          </EuiButton>
+        </EuiModalFooter>
+      </EuiModal>
     );
   }
 
