@@ -902,7 +902,8 @@ def blocked_ips():
         {"agent_id": v.get("agent_id"), "agent_name": names.get(v.get("agent_id")),
          "srcip": v.get("srcip"),
          "since": v.get("timestamp"), "alert_ref": v.get("alert_ref"),
-         "reason": v.get("reason"), "unblock_unconfirmed": v["unblock_unconfirmed"]}
+         "reason": v.get("reason"), "unblock_unconfirmed": v["unblock_unconfirmed"],
+         "manual": _manual_unblock(ipaddress.ip_address(v.get("srcip")))}
         for v in state.values()
     ]}
 
@@ -911,35 +912,42 @@ class UnblockRequest(BaseModel):
     agent_id: str
     srcip: str
     reason: str | None = None
+    confirm: bool = False         # the analyst has removed the rule on the agent
+
+
+def _manual_unblock(ip):
+    """The commands that remove a firewall-drop by hand. The AR script inserts the
+    DROP in INPUT and FORWARD; a repeated block inserts it again, hence 'repeat'."""
+    tool = "ip6tables" if ip.version == 6 else "iptables"
+    return f"{tool} -D INPUT -s {ip} -j DROP; {tool} -D FORWARD -s {ip} -j DROP"
 
 
 @app.post("/api/response/unblock-ip")
 def unblock_ip(req: UnblockRequest, x_analyst: str | None = Header(None)):
-    """Best-effort unblock. Wazuh has no first-class 'undo firewall-drop' over the
-    manager API — this attempts the paired delete on the agent. If Wazuh does not
-    accept it, the action is audited as 'unconfirmed' and the IP stays in the
-    blocked view, flagged, rather than being shown as unblocked while the drop
-    may persist."""
+    """Record an unblock; Wazuh cannot perform one. Its manager API only ever sends
+    the firewall-drop script an "add", so the "delete" this used to send ran the
+    block a second time while the console reported it removed (failure log
+    Entry 45). Now nothing is sent: the request is audited as 'unconfirmed' with
+    the commands to remove the rule on the agent, and the IP stays listed until the
+    analyst confirms the removal (confirm=true), audited as 'executed'."""
     try:
-        ipaddress.ip_address(req.srcip)
+        ip = ipaddress.ip_address(req.srcip)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"'{req.srcip}' is not a valid IP")
 
     audit_req = BlockRequest(agent_id=req.agent_id, srcip=req.srcip,
                              reason=req.reason or "manual unblock from dashboard")
-    try:
-        res = wazuh_api.unblock_ip(req.agent_id, req.srcip)
-        wazuh_msg, status = res.get("message"), "executed"
-        detail = f"firewall-drop delete sent to agent {req.agent_id}"
-    except Exception as e:
-        wazuh_msg, status = None, "unconfirmed"
-        detail = (f"delete not confirmed ({e}). The drop may persist — remove it on "
-                  "the agent (iptables -D) or install the firewall-drop delete "
-                  "active-response, then retry.")
+    manual = _manual_unblock(ip)
+    if req.confirm:
+        status, detail = "executed", f"rule removed by hand on agent {req.agent_id}; removal confirmed"
+    else:
+        status = "unconfirmed"
+        detail = (f"nothing sent: Wazuh's API cannot undo firewall-drop. On agent "
+                  f"{req.agent_id}, run {manual} (repeat until no rule is left; inside "
+                  "the agent's container for a containerised agent), then confirm the removal.")
 
     doc = _audit("unblock-ip", audit_req, status, detail, _analyst(x_analyst))
-    return {"ok": True, "confirmed": status == "executed", "wazuh": wazuh_msg,
-            "audit": doc}
+    return {"ok": True, "confirmed": req.confirm, "manual": manual, "audit": doc}
 
 
 # ----------------------------------------------------------------- triage API

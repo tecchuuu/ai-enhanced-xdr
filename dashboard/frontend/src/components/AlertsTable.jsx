@@ -187,7 +187,7 @@ export default function AlertsTable({
                   color={a.blocked.unblock_unconfirmed ? "warning" : "danger"}
                   content={
                     a.blocked.unblock_unconfirmed
-                      ? "Unblock sent but not confirmed — the block may still be in place"
+                      ? "Unblock requested — the block stays until it is removed on the agent and confirmed on the Response log"
                       : `Blocked on ${a.blocked.agent_name ?? `agent ${a.blocked.agent_id}`} since ${fmtTime(a.blocked.since)}`
                   }
                   aria-label="blocked"

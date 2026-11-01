@@ -98,7 +98,7 @@ pivot (every alert from an address, targeted accounts, block state — click any
 IP), per-alert triage (status / assignee / note / mark-false-positive), a
 **Rules vs AI** page (rule alerts and AI detections minute by minute, with the
 counts, "flagged only by AI", and the false-positive rate among reviewed
-detections), one-click IP blocking via Wazuh Active Response with an unblock
+detections), one-click IP blocking via Wazuh Active Response with a manual-unblock
 action and current-block view, audit-logged response history, live agent
 status, a detector status indicator in the header, and a **Pipeline** page
 (OpenSearch, Wazuh API, each detector's check-in, the AI assistant) so a quiet
@@ -136,5 +136,5 @@ On the SIAM VM (H100 80GB, Sep–Nov 2026), which lifted the earlier CPU-only/AM
 ## Limitations
 
 - **Detection plane is co-located with the monitored host** for the proof of concept. Detection itself is unaffected, but log tamper-resistance is not: a root-level compromise of the VM can destroy local evidence before it is acted on. A production deployment isolates the Wazuh manager / Kafka / OpenSearch onto a separate host; the pipeline design (Kafka between capture and model) is what makes that split a configuration change rather than a rewrite.
-- **Response is manual by default.** Anomaly detection carries false positives, so AI detections are routed to a human rather than auto-blocked. Automatic response (Wazuh Active Response `firewall-drop`) is appropriate only for the highest-confidence tier. Unblocking is best-effort — Wazuh exposes no first-class API undo (see `docs/dashboard-build-notes.md`).
+- **Response is manual by default.** Anomaly detection carries false positives, so AI detections are routed to a human rather than auto-blocked. Automatic response (Wazuh Active Response `firewall-drop`) is appropriate only for the highest-confidence tier. Unblocking is manual — Wazuh's API cannot undo a firewall-drop, so the console records the unblock, gives the command to remove the rule on the agent, and keeps the IP listed until the removal is confirmed (see `docs/dashboard-build-notes.md`).
 - **Host-side detection only.** Two anomaly lanes run on endpoint logs: authentication (evaluated, R10) and web access logs (`ai-stack/pipeline/web_detection_consumer.py`, rule 100002, validated R11). A host/FIM detector is designed (`docs/ROADMAP.md`) but not built, and a network lane is out of scope — so cross-layer coverage is endpoint logs only, with no network-flow view.

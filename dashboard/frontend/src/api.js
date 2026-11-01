@@ -103,8 +103,10 @@ export function blockIp({ agentId, srcip, alertRef, reason }) {
   });
 }
 
-export function unblockIp({ agentId, srcip, reason }) {
-  return postJson("/api/response/unblock-ip", { agent_id: agentId, srcip, reason });
+// Wazuh can't undo a block: this records the request (confirm=false) or the
+// analyst's confirmation that the rule was removed on the agent (confirm=true)
+export function unblockIp({ agentId, srcip, reason, confirm = false }) {
+  return postJson("/api/response/unblock-ip", { agent_id: agentId, srcip, reason, confirm });
 }
 
 export function explainAlert(alertId, provider) {

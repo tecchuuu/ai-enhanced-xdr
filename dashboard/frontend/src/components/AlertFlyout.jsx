@@ -223,7 +223,7 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
           {alert.blocked && (
             <EuiFlexItem grow={false}>
               <EuiBadge color={alert.blocked.unblock_unconfirmed ? "warning" : "danger"} iconType="lock">
-                {alert.blocked.unblock_unconfirmed ? "unblock unconfirmed" : "source blocked"}
+                {alert.blocked.unblock_unconfirmed ? "unblock pending" : "source blocked"}
               </EuiBadge>
             </EuiFlexItem>
           )}
@@ -326,7 +326,7 @@ export default function AlertFlyout({ alert, onClose, onRefresh }) {
               <>
                 <EuiFlexItem grow={false}>
                   <EuiText size="s" color="subdued">
-                    {alert.blocked.unblock_unconfirmed ? "Unblock not confirmed for" : "Blocked:"}{" "}
+                    {alert.blocked.unblock_unconfirmed ? "Unblock pending for" : "Blocked:"}{" "}
                     {alert.srcip} on{" "}
                     {alert.blocked.agent_name ?? `agent ${alert.blocked.agent_id}`} since{" "}
                     {fmtTime(alert.blocked.since)}

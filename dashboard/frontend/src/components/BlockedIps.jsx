@@ -8,6 +8,7 @@ import {
   EuiEmptyPrompt,
   EuiConfirmModal,
   EuiCallOut,
+  EuiCodeBlock,
   EuiBadge,
   EuiToolTip,
   EuiLink,
@@ -18,13 +19,18 @@ import { fmtTime, refText } from "../lib/format";
 import { useNav } from "../lib/nav";
 import PanelTitle from "./PanelTitle";
 
+const agentLabel = (row) => row.agent_name ?? `agent ${row.agent_id}`;
+
+// Wazuh's API can't undo a firewall-drop (failure log Entry 45), so an unblock is
+// two steps: record the request and remove the rule on the agent by hand, then
+// confirm the removal here. Until then the IP stays listed as "unblock pending".
 export default function BlockedIps() {
   const { openIp } = useNav();
   const [blocked, setBlocked] = useState(null);
-  const [target, setTarget] = useState(null); // row pending unblock
+  const [target, setTarget] = useState(null); // row being unblocked or confirmed
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [notice, setNotice] = useState(null); // unblock Wazuh didn't accept
+  const [notice, setNotice] = useState(null); // the unblock just recorded
 
   const load = usePolling(async (isCurrent) => {
     try {
@@ -35,18 +41,20 @@ export default function BlockedIps() {
     }
   }, 15000);
 
-  const confirmUnblock = async () => {
+  const confirming = Boolean(target?.unblock_unconfirmed);
+
+  const submit = async () => {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await unblockIp({ agentId: target.agent_id, srcip: target.srcip });
-      if (res.confirmed === false) {
-        setNotice(
-          `Wazuh did not confirm the unblock of ${target.srcip} on ${target.agent_name ?? `agent ${target.agent_id}`}. ` +
-            "The drop may still be in place, so it stays listed — remove it on the agent " +
-            "(iptables -D) or retry. Details are in the response log."
-        );
+      const res = await unblockIp({
+        agentId: target.agent_id,
+        srcip: target.srcip,
+        confirm: confirming,
+      });
+      if (!confirming) {
+        setNotice({ ip: target.srcip, agent: agentLabel(target), manual: res.manual });
       }
       setTarget(null);
       load();
@@ -77,8 +85,8 @@ export default function BlockedIps() {
       width: "170px",
       render: (row) =>
         row.unblock_unconfirmed ? (
-          <EuiToolTip content="An unblock was sent but Wazuh did not accept it — the drop may still be in place on the agent.">
-            <EuiBadge color="warning">unblock unconfirmed</EuiBadge>
+          <EuiToolTip content="Unblock requested. Wazuh can't remove a firewall block, so the rule stays until it is removed on the agent by hand and the removal is confirmed here.">
+            <EuiBadge color="warning">unblock pending</EuiBadge>
           </EuiToolTip>
         ) : (
           <EuiBadge color="hollow">blocked</EuiBadge>
@@ -86,10 +94,10 @@ export default function BlockedIps() {
     },
     {
       name: "Action",
-      width: "140px",
+      width: "150px",
       render: (row) => (
         <EuiButton size="s" color="text" onClick={() => setTarget(row)}>
-          {row.unblock_unconfirmed ? "Retry unblock" : "Unblock"}
+          {row.unblock_unconfirmed ? "Confirm removed" : "Unblock"}
         </EuiButton>
       ),
     },
@@ -99,18 +107,27 @@ export default function BlockedIps() {
     <EuiPanel hasBorder>
       <PanelTitle
         title="Currently blocked"
-        info="IPs currently blocked by Wazuh's firewall-drop response, worked out from the response log. Unblocking is best-effort — Wazuh has no proper undo. If Wazuh does not confirm an unblock, the IP stays listed as 'unblock unconfirmed'."
+        info="IPs currently blocked by Wazuh's firewall-drop response, worked out from the response log. Wazuh's API has no undo for a block, so Unblock records the request and gives the command to remove the rule on the agent; the IP stays listed as 'unblock pending' until the removal is confirmed here."
       />
       <EuiSpacer size="s" />
       {notice && (
         <>
           <EuiCallOut
-            title={notice}
+            title={`Unblock of ${notice.ip} recorded — the rule is still in place`}
             color="warning"
             iconType="warning"
             size="s"
             onDismiss={() => setNotice(null)}
-          />
+          >
+            <p>
+              Wazuh can't remove a firewall block, so nothing was sent. Run this on{" "}
+              {notice.agent} (inside its container, for a containerised agent), repeating
+              until no rule is left, then click <strong>Confirm removed</strong>:
+            </p>
+            <EuiCodeBlock language="bash" fontSize="s" paddingSize="s" isCopyable>
+              {notice.manual}
+            </EuiCodeBlock>
+          </EuiCallOut>
           <EuiSpacer size="s" />
         </>
       )}
@@ -130,20 +147,37 @@ export default function BlockedIps() {
       )}
       {target && (
         <EuiConfirmModal
-          title={`Unblock ${target.srcip}?`}
+          title={confirming ? `Confirm ${target.srcip} was removed?` : `Unblock ${target.srcip}?`}
           onCancel={() => setTarget(null)}
-          onConfirm={confirmUnblock}
+          onConfirm={submit}
           cancelButtonText="Cancel"
-          confirmButtonText={busy ? "Unblocking…" : "Unblock"}
+          confirmButtonText={busy ? "Saving…" : confirming ? "Confirm removed" : "Record unblock"}
           confirmButtonDisabled={busy}
           defaultFocusedButton="cancel"
         >
           <EuiText size="s">
-            <p>
-              Removes the firewall block on <strong>{target.srcip}</strong> on{" "}
-              {target.agent_name ?? `agent ${target.agent_id}`} and records it in the response log.
-            </p>
+            {confirming ? (
+              <p>
+                Only confirm once the rule for <strong>{target.srcip}</strong> is gone from{" "}
+                {agentLabel(target)}. The IP then leaves this list, and the confirmation is
+                recorded in the response log under your name.
+              </p>
+            ) : (
+              <p>
+                Wazuh can't remove a firewall block, so nothing is sent to{" "}
+                {agentLabel(target)}. This records the unblock in the response log and gives
+                the command to remove the rule for <strong>{target.srcip}</strong> by hand.
+              </p>
+            )}
           </EuiText>
+          {confirming && target.manual && (
+            <>
+              <EuiSpacer size="s" />
+              <EuiCodeBlock language="bash" fontSize="s" paddingSize="s" isCopyable>
+                {target.manual}
+              </EuiCodeBlock>
+            </>
+          )}
           {error && (
             <>
               <EuiSpacer size="s" />

@@ -63,26 +63,14 @@ def block_ip(agent_id: str, srcip: str):
 
     The agent-side AR script adds an iptables DROP for srcip — the same
     mechanism a Wazuh rule-triggered response uses, just initiated manually.
+
+    There is no API call to undo it: the API only ever sends the script an "add",
+    so a "delete" sent this way ran the block a second time (failure log Entry 45).
+    Unblocking is done on the agent by hand; main.py records it.
     """
     body = {
         "command": "!firewall-drop",
         "arguments": [],
-        "alert": {"data": {"srcip": srcip}},
-    }
-    return _request("PUT", f"/active-response?agents_list={agent_id}", json=body)
-
-
-def unblock_ip(agent_id: str, srcip: str):
-    """Attempt to remove a firewall-drop previously added for srcip.
-
-    Wazuh's manager API has no documented 'undo' for active response; this sends
-    the firewall-drop command tagged as a delete, which the agent AR wrapper
-    honours when it supports the add/delete protocol. Callers treat failure as
-    non-fatal and fall back to recording intent + agent-side teardown.
-    """
-    body = {
-        "command": "!firewall-drop",
-        "arguments": ["delete"],
         "alert": {"data": {"srcip": srcip}},
     }
     return _request("PUT", f"/active-response?agents_list={agent_id}", json=body)

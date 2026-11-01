@@ -210,12 +210,17 @@ technique→tactic map (`AI_TACTICS`) for the AI heuristics' techniques.
 
 ## Known limitations (state these in the report)
 
-1. **Unblock is best-effort.** Wazuh's manager API has no documented "undo
-   firewall-drop". `POST /api/response/unblock-ip` attempts the paired delete
-   command. If Wazuh does not accept it, the action is audited as `unconfirmed`
-   and the IP stays in **Currently blocked**, flagged *unblock unconfirmed*, rather
-   than being shown as unblocked — a persistent drop may need `iptables -D` on the
-   agent or a custom delete AR. This is a Wazuh constraint, not a design gap.
+1. **Unblock is manual.** Wazuh's manager API cannot undo a firewall-drop: it
+   only ever sends the script an "add", so the "delete" the console used to send
+   ran the block a second time while the console reported it removed (failure
+   log Entry 45, found 2026-11-01). Now `POST /api/response/unblock-ip` sends
+   nothing to Wazuh. It audits the request as `unconfirmed` and returns the
+   `iptables -D` commands (INPUT and FORWARD, repeated until none is left; inside
+   the agent's container for a containerised agent). The IP stays in **Currently
+   blocked**, flagged *unblock pending*, until the analyst removes the rule and
+   clicks **Confirm removed** (`confirm: true`, audited as `executed`). A real
+   unblock would need a custom active-response script on the agent whose "add"
+   removes the rule.
 2. **Pre-August detections** lack `category` / `top_srcips` (pre-enrichment) —
    the breakdown chart lists them as "no category".
 3. **MTTR / FP rate are only meaningful once analysts work the queue** — with an
@@ -229,9 +234,11 @@ technique→tactic map (`AI_TACTICS`) for the AI heuristics' techniques.
       after the 15s refresh (or immediately via the `onRefresh` path).
 - [ ] `/api/metrics` overlap math against a known scenario (fast brute force =
       high `both`; slow brute force = high `ai_only`).
-- [ ] Block an IP from another host → it appears in **Currently blocked** →
-      unblock → it leaves the list and a `unblock-ip` row lands in the audit log
-      (or it stays, flagged *unblock unconfirmed*, if Wazuh rejects the delete).
+- [x] Block an IP from another host → it appears in **Currently blocked** and its
+      traffic is dropped. Verified 2026-11-01 with a test attacker container on a
+      private Docker network (10.99.0.10). The old unblock failed this check
+      (Entry 45); after the fix: Unblock → *unblock pending* with the commands →
+      remove on the agent → **Confirm removed** → it leaves the list.
 - [ ] A web detection (rule 100002) opens with its URL fields and model name in
       the flyout, not "—".
 - [ ] Type a triage note, wait past a 15s refresh without saving → the note is

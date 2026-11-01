@@ -27,7 +27,7 @@ function BlockStatus({ blocked }) {
   return (
     <>
       <EuiBadge color={blocked.unblock_unconfirmed ? "warning" : "danger"}>
-        {blocked.unblock_unconfirmed ? "unblock unconfirmed" : "blocked"}
+        {blocked.unblock_unconfirmed ? "unblock pending" : "blocked"}
       </EuiBadge>{" "}
       since {fmtTime(blocked.since)} on {blocked.agent_name ?? `agent ${blocked.agent_id}`} — managed
       under Response log
