@@ -16,7 +16,7 @@ flowchart LR
     EP["Monitored Endpoint<br/><i>Ubuntu host</i>"]
     AT["Attacker<br/><i>authentication attempts</i>"]
     AN["SOC Analyst"]
-    GPU["GPU Environment<br/><i>SIAM AI H100 80GB / Morpheus</i><br/>(provisioned Sep–Nov 2026)"]
+    GPU["GPU Environment<br/><i>SIAM AI H100 80GB</i><br/>Morpheus DFP · local LLM"]
 
     SYS(("AI-Enhanced XDR<br/>System"))
 
@@ -27,18 +27,17 @@ flowchart LR
     SYS -->|"rule alerts,<br/>AI detections,<br/>anomaly scores"| AN
     AN -->|"queries, filters,<br/>severity threshold"| SYS
 
-    SYS -.->|"feature vectors<br/>(future)"| GPU
-    GPU -.->|"inference results<br/>(future)"| SYS
+    SYS -->|"feature windows,<br/>detections to explain"| GPU
+    GPU -->|"anomaly scores,<br/>explanations"| SYS
 
     classDef ext fill:#1B1926,stroke:#E8A33D,stroke-width:2px,color:#E8E5F2
     classDef sys fill:#232032,stroke:#6BE1C4,stroke-width:3px,color:#E8E5F2
     classDef fut fill:#1B1926,stroke:#8E88A6,stroke-width:1px,stroke-dasharray:5 5,color:#8E88A6
-    class EP,AT,AN ext
+    class EP,AT,AN,GPU ext
     class SYS sys
-    class GPU fut
 ```
 
-**Note for the report:** the GPU environment is drawn with dashed edges to mark the boundary between the locally-built core and the Morpheus deployment on external (SIAM AI) hardware. As of Sep 2026 that hardware is **provisioned** — an H100 80GB, passthrough, available 2 Sep – 30 Nov 2026 — so this is an active deployment target, not a hypothetical one. The earlier framing (development GPU is AMD / no CUDA) no longer applies; that constraint was lifted when SIAM AI provided the H100. Once Morpheus is running on it, redraw these edges solid. *(The host also carries a BlueField-3 DPU. It is not shown because the network lane it was intended for is out of scope.)*
+**Note for the report:** the GPU environment is the sponsor's hardware — an H100 80GB, passthrough, available 2 Sep – 30 Nov 2026. It runs Morpheus DFP, in the model slot and as the SSH lane's pipeline runtime (results log R16, R19), and the local LLM explainer (R15), so its edges are now solid; until October they were dashed, marking a planned deployment. *(The host also carries a BlueField-3 DPU. It is not shown because the network lane it was intended for is out of scope.)* The report's final diagrams were redrawn from this source as figures, so the two may differ in layout.
 
 ---
 
@@ -51,21 +50,21 @@ flowchart TD
     EP["Monitored Endpoint"]
     AN["SOC Analyst"]
 
-    P1["1.0<br/>Log Collection<br/><i>wazuh-agent</i>"]
+    P1["1.0<br/>Log Collection<br/><i>logcollector: host /var/log,<br/>or a wazuh-agent</i>"]
     P2["2.0<br/>Decode &<br/>Rule Analysis<br/><i>analysisd</i>"]
     P3["3.0<br/>Event Archiving<br/><i>logall_json</i>"]
     P4["4.0<br/>Stream Publishing<br/><i>Filebeat</i>"]
-    P5["5.0<br/>Feature Engineering<br/>& Inference<br/><i>detection_consumer.py</i>"]
+    P5["5.0<br/>Feature Engineering<br/>& Inference<br/><i>auth / web detectors,<br/>morpheus-auth</i>"]
     P6["6.0<br/>Alert Storage<br/><i>OpenSearch</i>"]
-    P7["7.0<br/>Presentation<br/><i>FastAPI + dashboard</i>"]
+    P7["7.0<br/>Presentation<br/><i>FastAPI + SOC console</i>"]
 
     D1[("D1 archives.json<br/><i>all events</i>")]
     D2[("D2 Kafka topic<br/><i>wazuh-archives</i>")]
     D3[("D3 wazuh-alerts-*<br/><i>rule alerts</i>")]
     D4[("D4 ai-detections-*<br/><i>model detections</i>")]
 
-    EP -->|"raw log events<br/>(journald)"| P1
-    P1 -->|"forwarded events<br/>:1514/tcp"| P2
+    EP -->|"raw log events<br/>(auth.log, access.log)"| P1
+    P1 -->|"log lines<br/>(agents: :1514/tcp)"| P2
 
     P2 -->|"matched events<br/>(rule.level assigned)"| P6
     P2 -->|"ALL decoded events<br/>(matched + unmatched)"| P3
@@ -235,7 +234,7 @@ State these in §3.3 so the built system and the documented design agree.
 
 | Proposal (Figure 3.1) | As built | Reason |
 |---|---|---|
-| Morpheus performs inference | Isolation Forest on CPU (core build); Morpheus deployment on provided H100 (Sep–Nov 2026) | Original local GPU (AMD RX 5700 XT) could not run CUDA, so the method was first proven on CPU. SIAM AI then provided an H100 80GB, so Morpheus moves from documented target to actual deployment. The CPU implementation stands as the equivalence baseline. |
+| Morpheus performs inference | Morpheus DFP on the H100 — in the model slot and as the SSH lane's pipeline runtime (`morpheus-auth`) — beside CPU detectors running Isolation Forest | Original local GPU (AMD RX 5700 XT) could not run CUDA, so the method was first proven on CPU. SIAM AI then provided an H100 80GB and Morpheus was deployed on it (R16, R19). The CPU detectors stay as the baseline. |
 | Triton in the data path | Not implemented | Triton is a model-serving service invoked by request/response, not a stage data flows through. Correction already applied to §3.3. |
 | AI alerts returned via Wazuh REST API | Written directly to OpenSearch (`ai-detections-*`) | The REST API on port 55000 is a management interface, not an alert-ingestion path. |
 | Pre-trained model, no training | Baseline fitted on local data | DFP requires a baseline fitted per environment; no pre-trained model can encode this system's normal behaviour. See §2.1.3. |

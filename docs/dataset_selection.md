@@ -3,6 +3,12 @@
 *Dataset selection and evaluation protocol — researched 2026-10-21. The decision
 it supports is recorded in `failure_log.md` Entry 36.*
 
+> **Outcome (failure log Entry 38):** AIT's attacked server turned out to hold almost
+> no SSH activity and no SSH attacks, so AIT-LDS serves the **web lane only** (results
+> log R17: fox, russellmitchell, santos). The **SSH lane**, and the web attacks AIT
+> lacks, were evaluated on the lab dataset (`lab/`, R18). The plan below is kept as
+> researched; where it says "both lanes", read "the web lane".
+
 Use the **AIT Log Data Set v2.0 (AIT-LDS v2.0)** as your only public dataset for both lanes. Evaluate on **two or three of its eight scenarios**, and add **your own scripted lab attacks** as a second test set. The lab set is required, not optional. AIT-LDS v2.0 is the only public dataset found that gives you all three things a window detector needs, in one package. First, it has raw Apache access logs and Linux auth logs from the same hosts and timeline, so Wazuh can decode them without changes. Second, it has several attack-free days before the attack, so you can train on normal windows only. Third, it has machine-readable labels for each log line, so you can label 1-minute windows exactly ([Zenodo AIT-LDS v2.0](https://zenodo.org/records/5789064)). A companion release contains **2,293,628 Wazuh alerts** produced from the same logs, which gives your "AI vs Wazuh rules" comparison a published reference point ([Zenodo AIT-ADS](https://zenodo.org/records/8263181)). The big gap is the SSH lane: the AIT attack chain has **no SSH brute force**. All six of your SSH attack types, plus SQL injection, XSS and path traversal for the web lane, must therefore come from your lab. The well-known alternatives are rejected because their data format does not fit your detector: CIC-IDS2017/2018 are network flows, LANL is Windows authentication, CSIC 2010 has no timestamps, LogHub OpenSSH has no labels, and honeypots have no normal traffic. For evaluation, use a time-ordered split and fix the threshold on normal data before you look at test labels. Report PR-AUC and false alarms per day instead of accuracy, give results per attack type, and compare against two baselines: Wazuh rules and a simple count threshold. Your VM access ends on **30 November 2026**, so finish and export everything that needs the VM by about 25 November: the AIT replay through Wazuh, the lab capture and the Morpheus DFP runs.
 
 ## Use AIT-LDS v2.0 for both lanes and your own lab for the gaps

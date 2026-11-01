@@ -1,5 +1,7 @@
 # XDR Dashboard v2 — Plan
 
+> **Implemented.** This was the design plan; the console it describes is built and live. What was built, and how it changed after a security lecturer's review (failure log Entry 43), is in `dashboard-build-notes.md`.
+
 Goal: replace the static `dashboard/dashboard.html` with a Wazuh-look-alike SOC console
 that adds the AI layer on top. Familiarity first — a SOC analyst who knows Wazuh should
 feel at home immediately; the AI detections and response actions are the only new things

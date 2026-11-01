@@ -1,5 +1,7 @@
 # AI-Enhanced XDR — Complete Working Plan
 
+> **Historical (July 2026).** This is the plan the project started from, kept as written apart from the dated notes inside. For the system as built see `README.md`; for status and what's next, `ROADMAP.md` and the status block at the end of `failure_log.md`.
+
 *A single reference pulling together the whole plan: pipeline, tools, how they interconnect, what's missing, document structure, and the order to actually do things.*
 
 > **How to read this:** This is base knowledge to work from, not gospel. Verify specifics (exact configs, versions, your course's report template) against official docs and your advisor. The *reasoning* and *sequence* here are sound; treat exact commands/settings as "look them up when you get there."

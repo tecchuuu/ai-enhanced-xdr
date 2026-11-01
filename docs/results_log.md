@@ -21,6 +21,8 @@
 | E9 | Split-timeline dashboard | Rule vs model, "missed by rules" badge | R7, R8 |
 | E10 | 5712 timestamp list | Rule-based baseline coverage | R7 |
 
+The final report figures — the Wazuh overview and six console pages from the SIAM VM (2026-10-31), and the evaluation plots made from the R17/R18 outputs — live with the report, outside this repo.
+
 ---
 
 ## R1 — Claim A: the pipeline works (infrastructure)
@@ -502,16 +504,43 @@ Both attack phases were detected on the first scoring cycles after the 10-window
 
 ---
 
+## R20 — A console block drops a live attacker's traffic on the H100 VM
+
+**Measured:** whether **Block IP** in the console, on the deployed system, really stops an attacker — not only whether Wazuh accepts the request.
+
+**Setup (2026-11-01):** a test attacker in a container on its own Docker network (`10.99.0.0/24`, a range nothing else on the shared VM uses), so a block could not affect anyone else. It ran 80 failed SSH logins against the VM. Wazuh raised rule 5712 (sshd brute force) from `10.99.0.10`; the block was issued from that alert in the console. Reachability was tested before and after with `nc` to port 22 from the same address.
+
+**Result:**
+
+| Step | Outcome |
+|---|---|
+| Block from the console | audited `executed`, "firewall-drop sent to agent 004"; listed under **Currently blocked** |
+| Reachability after the block | no response — traffic from `10.99.0.10` dropped (INPUT and FORWARD) |
+| A block of `::1` (earlier, same session) | refused: loopback, with the reason in the response log |
+| The console's old Unblock | **reported success but re-applied the block** (a second DROP per chain) — failure log Entry 45; fixed the same day: unblock is now recorded with the removal commands and confirmed by hand |
+| After removing the rules by hand | reachable again (the SSH banner answered) |
+
+**Honest notes:**
+- One attacker, one block: a deployment check, not a measurement of response time. Response is human-confirmed by design, so no automated MTTR was measured.
+- The test also found the unblock defect, which no earlier test could have: it needs a real agent applying real rules.
+
+**How to state it:** "On the deployed system, blocking a live attacker from the console's alert view dropped its traffic at the host firewall through Wazuh Active Response, with the action audited under the analyst's name."
+
+---
+
 ## Known limitations (carry these into บทที่ 5)
 
 State these explicitly — they strengthen credibility rather than weaken it:
 
-1. **Single source IP (auth evaluation).** All *overnight-run* traffic originated from `127.0.0.1`, so `srcip` was constant and unusable as a feature there. Partially addressed on 2026-09-09: the web-lane run (R11) used a real off-host attacker (`192.168.1.133`); full multi-source validation remains future work.
-2. **No successful-login baseline.** Generated "normal" traffic used incorrect credentials, so all captured events are failures. A genuine normal baseline of successful logins would improve the model's notion of normal.
-3. **Short observation window.** Approximately 27 minutes of events (91 records). At 5-minute aggregation this yields only ~6 windows, below the sample size at which Isolation Forest output is statistically meaningful. The 05:24 false positive is a direct consequence.
-4. **Single host.** One monitored endpoint; no multi-agent or multi-user behavioural variation.
-5. **GPU used for the inference slot only.** The autoencoder now fits on the SIAM H100 (R14), but the rest of the chain — ingestion, Kafka, rules, dashboard — remains CPU, by design (§3 of the sponsor brief). NVIDIA Morpheus is the remaining GPU-native component.
+1. **Single source IP (auth evaluation).** All *overnight-run* traffic originated from `127.0.0.1`, so `srcip` was constant and unusable as a feature there. Partially addressed on 2026-09-09: the web-lane run (R11) used a real off-host attacker (`192.168.1.133`). **Resolved for the evaluation (R17, R18):** the lab's normal users come from `10.20.0.0/24` and its attackers from `10.20.9.0/24`, and AIT has real addresses. Live demo attacks still come from `::1`.
+2. **No successful-login baseline.** Generated "normal" traffic used incorrect credentials, so all captured events are failures. **Resolved by the lab dataset (R18):** seven days of simulated employees logging in successfully in a working-hours rhythm.
+3. **Short observation window.** Approximately 27 minutes of events (91 records). At 5-minute aggregation this yields only ~6 windows, below the sample size at which Isolation Forest output is statistically meaningful. The 05:24 false positive is a direct consequence. **Resolved for the evaluation:** AIT scenarios run 4–6 days and the lab 7, with frozen thresholds and five seeds.
+4. **Single host.** One monitored endpoint; no multi-agent or multi-user behavioural variation. *Still open.*
+5. **GPU used for the inference slot only.** The autoencoder now fits on the SIAM H100 (R14), but the rest of the chain — ingestion, Kafka, rules, dashboard — remains CPU, by design (§3 of the sponsor brief). **Since R19** the SSH lane also runs on Morpheus's pipeline runtime with DFP on the GPU; its dataframe stages run in CPU mode (failure log Entry 41).
 6. **No network lane (out of scope).** The BlueField-3 DPU was provisioned but never reachable — the host's `rshim` driver is broken, so nothing could be deployed onto its ARM complex — and the network lane was subsequently ruled out of scope (2026-10-17, failure log Entry 32). Both detection lanes (auth, web) read endpoint logs, so the system has no network-flow view: its coverage spans log sources on the host, not layers.
+7. **Scripted normal traffic.** The lab's and AIT's normal users are simulated, smoother than real ones, so false-alarm rates are likely optimistic (R17, R18).
+8. **The live detectors flag a fixed share** (about 15% of buffered windows each cycle), so live runs always flag something; detection quality is measured train-once, not live (R19).
+9. **Times are UTC.** The `hour` feature and the "off-hours" category use UTC, matching the evaluation data; deployed in Thailand, mornings before 13:00 are labelled off-hours.
 
 ---
 
@@ -519,11 +548,12 @@ State these explicitly — they strengthen credibility rather than weaken it:
 
 | Result needed | Status | Blocking |
 |---|---|---|
-| Longer evaluation run (60+ windows, normal baseline, multiple attack episodes) | not started | ~5–6 h unattended traffic generation (overnight) |
-| Multi-scale windowing comparison (1 / 5 / 15 min) | not started | needs the longer run above |
-| Streaming throughput measurement (events/sec) | pipeline ready | needs sustained traffic to measure |
-| Response time / MTTR measurement | not started | automated response playbook |
-| LLM alert-explanation quality assessment | **PARTIAL 2026-10-10 (R15)** — qualitative, 2 documents | a scored rubric over many detections |
+| Longer evaluation run (60+ windows, normal baseline, multiple attack episodes) | **DONE 2026-10-21 (R17, R18)** — AIT 4–6 days per scenario; lab 7 days, 65 SSH test windows, 12 attacks | — |
+| Multi-scale windowing comparison (1 / 5 / 15 min) | not done — future work (`ROADMAP.md`) | — |
+| Streaming throughput measurement (events/sec) | not measured — future work | needs sustained traffic |
+| Response time / MTTR measurement | not measured as defined — response is human-confirmed by design; detection within one scoring cycle | an automated response tier |
+| LLM alert-explanation quality assessment | **PARTIAL** — R15 (2 documents) and live on 2026-10-31; qualitative | a scored rubric over many detections |
+| Live block of an attacker on the deployed system | **DONE 2026-11-01 (R20)** — traffic dropped; unblock defect found and fixed | — |
 | Autoencoder comparison vs Isolation Forest | **DONE 2026-09-09 (R12)** | — |
 | Autoencoder on real GPU hardware | **DONE 2026-10-10 (R14)** | — |
 | NVIDIA Morpheus model in the inference slot | **DONE 2026-10-10 (R16)** | — |

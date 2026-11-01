@@ -73,7 +73,11 @@ Courtesy, not a dependency: tell the other group which ports you took.
 - Change the admin password: `hash.sh` → put hash in `internal_users.yml` → recreate indexer → `securityadmin.sh -f ... -t internalusers`. (See failure_log for the exact sequence + the bind-mount gotcha.)
 
 ## 3b. Our agent (container)
-The `wazuh.agent` service in `wazuh/docker-compose.yml` is our group's agent: it enrolls with our manager on `WAZUH_ENROLL_PORT` and reports on `WAZUH_AGENT_PORT` as `luckyfive-agent`, so the VM's host agent stays with the other group. It comes up with the rest of the stack (the first `up` builds it — needs internet for Wazuh's apt repo). It runs Active Response only — the console's **Block IP** — on host networking, so blocks land in the VM's firewall (keep `BLOCK_ALLOWLIST` set, §4: a block affects the whole shared VM). SSH events don't need it; the manager reads the host's auth log directly.
+The `wazuh.agent` service in `wazuh/docker-compose.yml` is our group's agent: it enrolls with our manager on `WAZUH_ENROLL_PORT` and reports on `WAZUH_AGENT_PORT` as `luckyfive-agent`, so the VM's host agent stays with the other group. It comes up with the rest of the stack (the first `up` builds it — needs internet for Wazuh's apt repo). It runs Active Response only — the console's **Block IP** — on host networking, so blocks land in the VM's firewall (keep `BLOCK_ALLOWLIST` set, §4: a block affects the whole shared VM). SSH events don't need it: the manager reads the host's auth log directly, through a read-only mount of the whole `/var/log` directory (`/var/log/host/auth.log` in `ossec.conf`). Mount the directory, never the single file — Ubuntu's weekly logrotate replaces `auth.log`, and a file mount stays on the old one, silently (failure log Entry 44).
+
+**Unblocking is manual.** Wazuh's API cannot undo a firewall-drop (failure log Entry 45), so the console's Unblock records the request and shows the commands; run them inside this agent's container, repeating until none is left, then click **Confirm removed**:
+
+    docker exec luckyfive_wazuh-wazuh.agent-1 sh -c 'while iptables -D INPUT -s <IP>/32 -j DROP 2>/dev/null; do :; done; while iptables -D FORWARD -s <IP>/32 -j DROP 2>/dev/null; do :; done'
 
 Already-running stack, bring up just the agent:
 
@@ -86,17 +90,18 @@ The console's **Agents** page then lists `luckyfive-agent` as active. The key li
 
 ## 4. .env (secrets — not in git)
     cp dashboard/.env.example dashboard/.env
-Set: `OS_HOST=localhost`, `OS_PORT=9200`, `OS_USER=admin`, `OS_PASS=<the pw from step 3>`,
-`EXPLAINER_PROVIDER=ollama`, `OLLAMA_MODEL=llama3.2` (no ANTHROPIC key),
+Set: `OS_HOST=localhost`, `OS_PORT=<INDEXER_PORT from §0, 9202 here>`, `OS_USER=admin`, `OS_PASS=<the pw from step 3>`,
+`EXPLAINER_PROVIDER=ollama`, `OLLAMA_MODEL=gemma3:12b` (§6; no ANTHROPIC key),
 `WAZUH_CONTAINER=luckyfive_wazuh-wazuh.manager-1` (only for the old `archive_producer.py`, kept as a fallback; Filebeat finds your manager by its log volume instead, §5).
 
 **Shared box → lock the console down.** The API listens on `0.0.0.0:8000` and can push firewall blocks to agents, so anyone on the VM's network — the other group included — could call it. In the same `.env`:
-- `DASHBOARD_API_KEY=<a long random string>` — the console asks for it once per browser (`openssl rand -hex 24` makes one).
-- `BLOCK_ALLOWLIST=<VM gateway IP>,<your workstation / VPN range>` — addresses the console refuses to block, on top of its built-in rules (loopback, the agent's and the manager's own IPs, your own address, non-routable ranges).
+- `DASHBOARD_API_KEY=<a long random string>` — the console asks for it once per browser (`openssl rand -hex 24` makes one). Empty means the API is open to anyone on the VPN; this VM ran that way until 2026-11-01. Check from any machine: `curl http://<vm>:8000/api/health` must say `"auth_required":true`.
+- `BLOCK_ALLOWLIST=<VM gateway IP>,<your workstation / VPN range>` — addresses the console refuses to block, on top of its built-in rules (loopback; unspecified, multicast, link-local and reserved addresses; the agent's and the manager's own IPs; your own address). Private ranges are *not* refused — lab attackers come from them — so the VPN gateway (`172.16.30.254` here) must be listed: everything from your PC arrives through it.
 
-After editing, restart the services that read it (they load `.env` at startup):
+After editing, restart the services that read it (they load `.env` at startup). The key and the allowlist are read only by the API; restarting the detectors also empties their window buffers, so they warm up again:
 
-    (cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml restart api auth-detector web-detector)
+    (cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml restart api)
+    (cd ai-stack && docker compose -p luckyfive_kafka -f ai-stack.yml restart api auth-detector web-detector)   # after changing detector settings
 
 ## 5. Kafka + pipeline + API (all containers)
 
@@ -108,15 +113,17 @@ That one command runs everything after Wazuh, from `ai-stack/ai-stack.yml`:
 |---|---|
 | `kafka` | the broker |
 | `filebeat` | ships every Wazuh event from the manager's archive into Kafka (`ai-stack/filebeat/filebeat.yml`) |
-| `auth-detector`, `web-detector` | the two detection consumers |
+| `auth-detector`, `web-detector` | the two detection consumers (CPU, Isolation Forest) |
+| `morpheus-auth` | the SSH lane again as a Morpheus pipeline, DFP on the GPU (§7b) |
 | `api` | FastAPI + the built console on `:8000` |
 
 - **Order:** Wazuh (§3) and `dashboard/.env` (§4) first. Filebeat reads the manager's log volume by name (`WAZUH_LOGS_VOLUME`, §0) and `up` refuses to start until it exists — deliberate: it can only ever read *our* manager's archive. The detectors and API refuse to start without `dashboard/.env`.
 - **Run it from `ai-stack/`** so compose reads `ai-stack/.env`.
 - **First run** builds the `luckyfive/ai-xdr` image (repo-root `Dockerfile`: the console with Node, then Python + `requirements.txt`) — a few minutes, needs internet. **After `git pull`, run the same command again**: `--build` rebuilds what changed, and only the services whose image changed are restarted. Without `--build`, the containers keep running the old code.
-- **Every service restarts on its own** (`restart: unless-stopped`) after a crash or a VM reboot. Status: `docker compose -p luckyfive_kafka -f ai-stack.yml ps` (the API shows `healthy`). Logs: `… logs -f auth-detector` (or `api`, `filebeat`). Stop: `… down` (§8).
+- **Every service restarts on its own** (`restart: unless-stopped`) after a crash or a VM reboot. Status: `docker compose -p luckyfive_kafka -f ai-stack.yml ps` (the API shows `healthy`). Logs: `… logs -f auth-detector` (or `api`, `filebeat`). Stop: `… down` (§9).
 - **Coming from `start_all.sh`** (removed): stop its processes once, or the old uvicorn keeps port 8000 and the API container can't start — `pkill -f '/LuckyFive/ai-enhanced-xdr/ml-venv/bin/(uvicorn|python -u)'` (the full path, so the other group's processes are never matched). `demo_run.sh` does this for you.
-- **Models:** the image has no PyTorch, so the containers run Isolation Forest. Leave `DETECTOR_MODEL` unset (or `isolation_forest`); the GPU models run from the Morpheus env (§7).
+- **Models:** the image has no PyTorch, so `auth-detector` and `web-detector` run Isolation Forest. Leave `DETECTOR_MODEL` unset (or `isolation_forest`); DFP runs live in `morpheus-auth`, and every model runs offline from the Morpheus env (§7).
+- **Timestamps are UTC.** The `hour` feature and the "off-hours activity" category (before 06:00 or from 22:00) use UTC, matching the evaluation data — in Thailand that is before 13:00 or from 05:00. Run demos between 13:00 and 05:00 local, or quiet minutes get labelled off-hours.
 - Check events reach Kafka: run this, then make any SSH login attempt on the VM. It prints one raw Wazuh event (JSON) or gives up after a minute:
 
       docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 --topic wazuh-archives --max-messages 1 --timeout-ms 60000
@@ -140,7 +147,7 @@ That one command runs everything after Wazuh, from `ai-stack/ai-stack.yml`:
 - confirm it is on the GPU: `ollama ps` → `100% GPU`
 
 ## 7. Morpheus (third model in the inference slot — R16)
-`morpheus-core` links RAPIDS and the MRC C++ engine, so it is **conda-only** — it cannot go in `ml-venv`. It is a Python library, not a service: nothing to run, only to import.
+`morpheus-core` links RAPIDS and the MRC C++ engine, so it is **conda-only** — it cannot go in `ml-venv`. The env is used two ways: imported, for DFP as a model (the comparison and evaluation scripts), and mounted read-only into the `morpheus-auth` service, which runs the SSH lane on Morpheus's pipeline runtime (§7b).
 
 ```
 curl -fsSLo /tmp/miniforge.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
@@ -177,8 +184,23 @@ The installs take ~25 min end to end; the conda solve is the slow part.
 - **`--cpu`** is Morpheus's CPU mode for the dataframe stages (pandas). GPU mode (cuDF) crashes inside Morpheus's worker threads on this VM — driver 580 (CUDA 13) with the env's RAPIDS 25.02 (failure log Entry 41). dfencoder runs on the H100 either way; at a few hundred windows the dataframe work is trivial.
 - **By hand instead** (foreground, for debugging): `python ai-stack/morpheus/auth_pipeline.py --cpu` in the env — stop the service first, or two Morpheus pipelines share one consumer group and Kafka splits the events between them.
 
-## 8. When done
-- `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group.
+## 8. Demo run and a real block
 
-## Later (stretch, unpredictable)
-- **Three-model comparison on a large dataset** — the 28-window fixture is too small for the neural models to show their advantage (R16 honest notes).
+    bash scripts/demo_run.sh
+
+Brings everything up, restarts the detectors and runs a scripted 15-minute SSH attack in the background (brute force at minute 6, spray at minute 9; `logs/attack.log` ends with `DONE`). Detections appear after about ten minutes. The attack comes from `::1`, which the console refuses to block. For a block that succeeds, attack from a container on its own Docker network — a private range nobody else uses, so the block touches nothing on the shared VM:
+
+    docker network create --subnet 10.99.0.0/24 lf-attacker
+    docker run --rm --network lf-attacker --ip 10.99.0.10 alpine:3.20 sh -c 'apk add -q --no-cache openssh-client && for i in $(seq 1 40); do for u in admin root; do ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=3 $u@10.99.0.1 true 2>/dev/null; done; done; echo done'
+
+Block `10.99.0.10` from its rule 5712 alert or AI detection. Prove the drop (`REACHABLE` before, `NO RESPONSE (blocked)` after):
+
+    docker run --rm --init --network lf-attacker --ip 10.99.0.10 alpine:3.20 sh -c 'nc -w 5 10.99.0.1 22 </dev/null && echo REACHABLE || echo "NO RESPONSE (blocked)"'
+
+Clean up: remove the rule (§3b), then `docker network rm lf-attacker`.
+
+## 9. When done
+- `docker compose -p luckyfive_wazuh down` and `docker compose -p luckyfive_kafka -f ai-stack/ai-stack.yml down` — frees the shared box for the other group. The lab generator too, if running: `docker compose -p luckyfive_lab -f lab/docker-compose.yml down`. Access to this VM ends 30 Nov 2026.
+
+## Later
+What's next, and how it attaches: `docs/ROADMAP.md`.

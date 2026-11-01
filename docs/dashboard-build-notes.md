@@ -144,7 +144,8 @@ explanation stays because it's on the doc).
 Provider = `EXPLAINER_PROVIDER` env var, overridable per call:
 - `mock` (default) — deterministic template per `ai.category`, built from the
   detection's own numbers. No model, no network. The honest fallback state.
-- `ollama` — local model, `OLLAMA_URL` / `OLLAMA_MODEL`. Untested.
+- `ollama` — local model, `OLLAMA_URL` / `OLLAMA_MODEL`. Live on the SIAM VM since
+  2026-10-10: gemma3:12b on the H100 (results log R15; `SETUP.md` §6).
 - `anthropic` — hosted Claude, `pip install anthropic` + `ANTHROPIC_API_KEY`,
   `ANTHROPIC_MODEL` (default `claude-opus-5`; `claude-haiku-4-5` is plenty and
   cheaper). Sends detection fields (IPs, usernames) off-box. Untested.
@@ -240,33 +241,41 @@ technique→tactic map (`AI_TACTICS`) for the AI heuristics' techniques.
       (Entry 45); after the fix: Unblock → *unblock pending* with the commands →
       remove on the agent → **Confirm removed** → it leaves the list.
 - [ ] A web detection (rule 100002) opens with its URL fields and model name in
-      the flyout, not "—".
+      the flyout, not "—". (Not checkable on the SIAM VM: it serves no web traffic.)
 - [ ] Type a triage note, wait past a 15s refresh without saving → the note is
       still there.
-- [ ] `POST /api/explain` on a real detection → text comes back, `ai.explanation`
+- [x] `POST /api/explain` on a real detection → text comes back, `ai.explanation`
       is persisted (re-open the flyout, it's still there), other `ai.*` fields
       intact. Then ask a follow-up in the panel → `/api/explain/chat` replies.
-      Mock provider works offline; try `ollama` once a model is pulled, or
-      `EXPLAINER_PROVIDER=anthropic` with a key.
+      Verified 2026-10-31 with `ollama` (gemma3:12b) on a live brute-force
+      detection: explanation and follow-up both grounded in its numbers.
 - [ ] Search hits on the real mappings: an IP in Security events (keyword
       `data.srcip`) and in AI detections (analyzed `ai.top_srcips.ip`), a
       username, a rule id. The test double can't check analyzers.
 - [ ] Agent selector narrows both feeds and the Overview tiles.
 - [ ] Related events on a real AI detection list the sshd alerts from its IP;
       the IP pivot's first/last seen and accounts look right for the attacker.
-- [ ] `docker compose … up -d --build` (SETUP §5), then open `http://<vm>:8000`
-      → the console (built inside the image) loads from the API's port; a
-      copied alert link reopens the same alert.
-- [ ] Set `DASHBOARD_API_KEY` → the console asks for it once; a browser without
-      it gets nothing but `/api/health`.
+- [x] `docker compose … up -d --build` (SETUP §5), then open `http://<vm>:8000`
+      → the console (built inside the image) loads from the API's port.
+      Verified 2026-10-31/11-01, over the VPN and straight from a Windows
+      browser. (A copied alert link reopening the same alert: not yet checked.)
+- [x] Set `DASHBOARD_API_KEY` → the console asks for it once; a browser without
+      it gets nothing but `/api/health`. Verified 2026-11-01: `auth_required`
+      true, `/api/queue` without the key → 401.
 - [ ] Blocking the VM's own IP, the manager's, or an allowlisted address is
       refused with a reason in the response log; blocking an IP twice → 409.
+      Live so far: loopback (`::1`) refused, with the reason in the response
+      log (2026-11-01). The others are covered by the local tests only.
 - [ ] Restart the detectors (`… restart auth-detector web-detector`) → the
       **Pipeline** page shows both `warming up`, then `running`; `… stop
       web-detector` → it turns `silent` within ~3 minutes and Overview says so.
-- [ ] The next real AI detection has a **Why it fired** table with sensible
+      Live so far: after `demo_run.sh` the SSH detectors went warming up →
+      running and the web detector stayed warming up (no web traffic).
+- [x] The next real AI detection has a **Why it fired** table with sensible
       medians, its real agent name, and an explanation (ollama) that quotes the
-      recorded cutoff.
+      recorded cutoff. Verified 2026-10-31: 40 login events against a typical
+      2.5, score 0.68 against a 0.61 cutoff, agent `wazuh.manager`; the
+      explanation called the score borderline.
 - [x] Frontend builds: `npm ci && npm run build` passes (Node 24, Vite 8),
       `oxlint` clean apart from the fast-refresh notices in `badges.jsx` /
       `ThemeProvider.jsx`.

@@ -14,8 +14,8 @@ AGENT_NAME="${AGENT_NAME:-luckyfive-agent}"
 #  - run what this agent is for — Active Response (the console's Block IP).
 #    File integrity, rootcheck, SCA and inventory would describe this
 #    container's filesystem, not the VM's, so they're off. No <localfile>
-#    either: SSH events already reach the manager through its mount of the
-#    host's auth.log, and reading it here too would double every event.
+#    either: SSH events already reach the manager through its read-only mount
+#    of the host's /var/log, and reading them here too would double every event.
 cat > /var/ossec/etc/ossec.conf <<EOF
 <ossec_config>
   <client>

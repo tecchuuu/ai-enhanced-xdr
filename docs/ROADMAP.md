@@ -1,93 +1,82 @@
-# Roadmap — read this when resources arrive
+# Roadmap — what is built, and how the next pieces attach
 
-Three rules, in priority order:
+Status as of 2026-11-01. Three rules, in priority order, then the work still open.
 
 ## 1. More attack types = more input views, NOT a smarter model
-The model is not the bottleneck; features are. The auth detector only sees
-srcip-carrying auth events (windowed into event_count / distinct_users /
-events_per_user / hour). To cover a new attack type, clone
-`ai-stack/pipeline/detection_consumer.py` with a feature set for that domain:
+The model is not the bottleneck; features are. Each lane windows one log source into
+one-minute features (`ai-stack/pipeline/features.py`, shared by the live detectors and
+the evaluation). To cover a new attack type, add a lane with a feature set for that
+domain, the way the web lane cloned the auth lane:
 
 | Detector | Feed | Features | Catches | Status |
 |---|---|---|---|---|
-| auth | sshd/PAM | events/user, distinct users | brute force, spraying | exists, evaluated |
-| web | nginx/apache access logs | request rate, URL diversity, 4xx ratio, POST ratio | fuzzing, injection, login brute force | online + validated 2026-09-09 (R11): content discovery + path traversal caught, real off-host IP |
-| network | conn/firewall logs | distinct dst ports, conn rate/src | port scans, sweeps | **out of scope** (decided 2026-10-17) |
+| auth | sshd/PAM | events/user, distinct users, max level, hour | brute force, spraying, distributed, low-and-slow | live as `auth-detector` (CPU) and `morpheus-auth` (Morpheus DFP, GPU); evaluated R10, R18; on the Morpheus runtime R19 |
+| web | nginx/apache access logs | request rate, URL diversity, 4xx ratio, POST ratio | scans, fuzzing, login brute force, traversal | live as `web-detector`; validated R11 (real off-host attacker); evaluated R17 (AIT-LDS), R18 (lab). The SIAM VM serves no web traffic, so it idles there |
+| network | conn/firewall logs | distinct dst ports, conn rate/src | port scans, sweeps | **out of scope** (decided 2026-10-17, failure log Entry 32) |
 | host | FIM/syscheck (already running) | file changes/min, new bins, sudo | persistence, priv-esc | not started |
 
-Each writes to the same `ai-detections-*` schema with its own `ai.category` and
-rule id (auth = 100001, web = 100002). The dashboard renders category, severity
-and top_srcips for any lane unchanged; lane-specific window fields (e.g. web's
-`top_urls`) need a few lines in `ai_alerts()` and the alert flyout.
+Each lane writes the same `ai-detections-*` schema with its own `ai.category` and
+rule id (auth = 100001, web = 100002). The console renders category, severity and
+top_srcips for any lane unchanged; lane-specific window fields (e.g. web's
+`top_urls`) need a few lines in `_fmt_ai()` and the alert flyout.
 
-**Web detector — to bring online:** stand up nginx on the monitored host, feed
-`/var/log/nginx/access.log` to Wazuh via a `<localfile>` block, then run
-`web_detection_consumer.py` alongside the auth consumer (its own Kafka consumer
-group, so both see every event). Attack it from another host with `ffuf`
-(content discovery), `hydra http-post-form` (login brute force), `sqlmap`
-(injection). Setup detail is in the module docstring.
+**Web traffic on a new host:** feed the web server's access log to Wazuh (mount its log
+directory into the manager, or an agent `<localfile>` with `log_format apache`); the
+`web-detector` service is already running. Attack from another host with `ffuf`
+(content discovery), `hydra http-post-form` (login brute force), `sqlmap` (injection).
 
-## 2. GPU arrives → swap ONLY the inference slot
-Isolation Forest → autoencoder (Morpheus DFP's approach: learn to reconstruct
-"normal", flag high reconstruction error). Same contract: Kafka in, detection
-docs out, same index schema. Nothing upstream or downstream changes — that's
-the "swap not rewrite" claim in the README; keep it true.
+## 2. Swap ONLY the inference slot
+Kafka in, detection documents out, same index schema: nothing upstream or downstream
+changes when the model does. That is the "swap, not rewrite" claim; keep it true.
 
-**Implemented (2026-09-09).** The slot is now a registry: `ai-stack/pipeline/models/`
-(`isolation_forest.py`, `autoencoder.py`), one interface `fit_score(X, contamination)`,
-selected by `DETECTOR_MODEL` in `.env`. Swapping is a config change, not a code edit.
-Autoencoder built (PyTorch, device-aware CPU/GPU) and compared head-to-head with IF (results
-log R12: comparable, autoencoder slightly broader on the low-and-slow phase). **Morpheus done (2026-10-10, R16):** `dfencoder` is the third
-registry entry — one new file, one registry line, zero consumer changes. It selected the
-identical 5 windows as Isolation Forest on the fixture. Note the scoping decision: Morpheus's
-*model* in this pipeline, not Morpheus's *pipeline runtime* replacing it. Bigger data is
-where the neural models are expected to pull ahead, and where this comparison must be re-run.
+**Done.** The slot is a registry (`ai-stack/pipeline/models/`): Isolation Forest, a
+PyTorch autoencoder (CPU/GPU) and **Morpheus DFP** (`dfencoder`), one interface,
+selected by `DETECTOR_MODEL`. Head-to-head: R12 (IF vs autoencoder), R14 (same verdicts,
+3.7× faster fit on the H100), R16 (all three on the fixture). On real-size labelled
+data DFP came out best on the SSH lane — the only model to catch low-and-slow guessing
+(R18) — and best or tied-best on every AIT web scenario (R17).
 
-## 2b. Data — sourced independently (NOT supplied by SIAM)
-**Correction (2026-10-10):** SIAM does not supply datasets — they are sourced online
-independently. The per-lane requirement is unchanged, and the coherent-slice rule still
-holds (never mix lanes):
-- **Auth lane** → SIAM Linux auth logs (multi-host, multi-user, real IPs) directly
-  retire the single-host / single-IP / no-success-baseline limits in results-log §5.3.
-- **Network lane** → **out of scope** (decided 2026-10-17; failure log Entry 32). The
-  BlueField-3 DPU it was meant to run on was provisioned but never reachable (host `rshim`
-  driver broken; failure log Entry 27). No network dataset is needed.
-- **Chosen (2026-10-21; failure log Entry 36):** AIT-LDS v2.0 for both lanes (raw
-  auth.log + Apache access logs, normal days, line-level labels) plus our own scripted lab
-  attacks for what AIT lacks (SSH brute force / spraying, SQLi, XSS). Comparison and the
-  "why not CIC-IDS / LANL / CSIC" answers: `docs/dataset_selection.md`.
+**The runtime too (R19).** Beyond the model, the SSH lane also runs on Morpheus's own
+pipeline runtime (`ai-stack/morpheus/auth_pipeline.py`, service `morpheus-auth`) beside
+the CPU consumer, which stays as the baseline. Its dataframe stages run in Morpheus CPU
+mode because cuDF crashes in the engine's worker threads on this driver (Entry 41).
 
-## 3. LLM is a READER, not a pipeline stage — LIVE on the H100
-The LLM consumes existing `ai-detections-*` docs and writes a 2-sentence analyst
-explanation back onto the doc (`ai.explanation`). The flyout displays it. It
-attaches on top; it never sits in the detection path (a slow/dead LLM must never
-delay detection — same reasoning as Kafka decoupling rules from AI).
+## 3. The LLM is a READER, not a pipeline stage
+It consumes existing `ai-detections-*` documents and writes an analyst explanation back
+onto the document (`ai.explanation`); follow-up questions go through
+`/api/explain/chat`. It never sits in the detection path — a slow or dead LLM must
+never delay detection — and it never acts. The flagged-or-not verdict is computed in
+code and given to it (the fix for the grounding error in R15).
 
-**Status: live on `ollama` (gemma3:12b, H100). `mock` remains the no-model fallback.** `dashboard/explainer.py` +
-`POST /api/explain` (one-shot, written onto the doc) + `POST /api/explain/chat`
-(follow-up Q&A, thread held client-side) + an "Analyst assistant" panel in the
-flyout: explain → then ask questions about that detection. Provider is one env
-var, `EXPLAINER_PROVIDER`:
-- `mock` (default) — deterministic template from the detection's own fields.
-  Works now; this is the honest "explanation layer done, model deferred" state.
-- `ollama` — local model via `http://localhost:11434`. **LIVE since 2026-10-10
-  (R15):** gemma3:12b on the SIAM H100, 0.8-1.2 s per explanation warm, nothing
-  leaves the box. Requires `OLLAMA_CONTEXT_LENGTH=4096` on the Ollama service —
-  its 131072 default crashes model load (failure log Entry 28).
-- `anthropic` — hosted Claude API (`pip install anthropic`, `ANTHROPIC_API_KEY`).
-  Sends detection fields off-box — a data-egress call to make explicitly in the
-  report. Untested.
-Swapping providers is one env var; the prompt and the writeback are shared, so
-"the explainer is model-agnostic" is demonstrable the same way the inference
-slot is.
+**Live on `ollama`** (gemma3:12b on the H100, about 7 s cold and 0.8–1.2 s warm; R15).
+`OLLAMA_CONTEXT_LENGTH=4096` is required, or model load crashes (Entry 28). `mock`
+remains the no-model fallback. `anthropic` (hosted Claude) is wired but untested, and
+would send detection fields off-box. One model was tested; comparing models was out of
+scope (report Chapter 5).
+
+## Data
+SIAM does not supply datasets; they are sourced independently
+(`docs/dataset_selection.md`). AIT-LDS v2.0 serves the **web lane** (R17): its attacked
+server has almost no SSH activity (Entry 38). The **SSH lane** — and web attacks AIT
+lacks (SQL injection, XSS, traversal, HTTP brute force) — is evaluated on the lab
+dataset (`lab/`, R18), every line replayed through the real Wazuh ruleset.
+
+## Next, in order of value
+1. **Per-user fingerprints at scale** — DFP per user and per host, as Morpheus's reference workflow does, once there are hundreds of records per account.
+2. **Real, multi-host traffic** — measure false alarms where normal is noisy (the lab's and AIT's normal users are scripted).
+3. **Multi-scale windows** (5 and 15 minutes) — push the detection floor below one attempt every six minutes.
+4. **One combined score** for signatures and models, so a single crafted request a signature flags and an anomalous minute reinforce each other.
+5. **Morpheus on the GPU end to end** with NVIDIA's tested container image (cuDF dataframe stages), then the web lane on the Morpheus runtime too.
+6. **A working unblock** — a custom active-response script on the agent whose "add" removes the DROP, so the console can undo a block (today it records the request and gives the command; Entry 45). Or blocks that expire.
+7. **Local time for the "off-hours" category** — it uses UTC hours (SETUP §5).
+8. **Robust training and drift detection** against baseline poisoning and changing behaviour.
+9. **Score the LLM's explanations** with a rubric over many detections; harden the prompt against instructions injected through log fields.
+10. **Production console security** — SSO with roles, HTTPS, a least-privilege OpenSearch account, the shipped default passwords changed (`docs/security.md`).
+11. **Throughput and response time** under sustained load.
+12. **The host (FIM) lane**, and a network lane if a DPU becomes reachable.
 
 ## Also remember
 - Detections written before Aug 2026 lack category/top_srcips (pre-enrichment).
-- Mock traffic from 127.0.0.1 is never blockable (loopback guard) — attack from
-  another host (VM LAN: attack ssh on this machine from the host) to demo Block IP.
-  **Blocked as of 2026-08-28:** the VM adapter is NAT, so the host cannot reach it.
-  Switch to bridged (or add a port-forward) before attempting this.
-- Producer needs docker group access — **done** (2026-08-28): `magi` is in the `docker` group, so plain `docker` works and the pipeline runs as the desktop user, not root.
-- Console colors live in `dashboard/frontend/src/theme/palette.js`, one validated
-  set per color mode. Do not add a hex anywhere else — dark is not a flip of light.
+- Attacks from the host itself come from `::1` / `127.0.0.1`, which the console refuses to block. To show a real block, attack from another machine or from a container on a private Docker network (SETUP §8; verified 2026-11-01).
+- Console colors live in `dashboard/frontend/src/theme/palette.js`, one validated set per color mode. Do not add a hex anywhere else — dark is not a flip of light.
 - Full design history: `docs/dashboard-plan.md`.
